@@ -4,49 +4,49 @@ import requests
 import folium
 from streamlit_folium import st_folium
 from pyproj import Transformer
+import time
 
-# --- GOOGLE MAPS API ---
-GOOGLE_API_KEY = st.secrets.get("AIzaSyAashMjJzxbRAj0wKBbxHi6WunL0kv48n4")  # Set this in Streamlit Cloud secrets
+# --- STREAMLIT SECRETS ---
+GOOGLE_API_KEY = st.secrets.get("AIzaSyAashMjJzxbRAj0wKBbxHi6WunL0kv48n4", "")
 
+# --- GOOGLE GEOCODING ---
 def get_street_name_google(lat: float, lon: float) -> str:
-    """Get street name using Google Maps Geocoding API"""
+    """Get street name using Google Geocoding API"""
+    if not GOOGLE_API_KEY:
+        return "Unknown"
+
     try:
         url = "https://maps.googleapis.com/maps/api/geocode/json"
         params = {"latlng": f"{lat},{lon}", "key": GOOGLE_API_KEY}
         response = requests.get(url, params=params, timeout=5)
         data = response.json()
+        
         if data.get("status") == "OK" and data.get("results"):
-            address_components = data["results"][0]["address_components"]
-            for comp in address_components:
-                if "route" in comp["types"]:
-                    return comp["long_name"]
-            # fallback: use formatted address if route not found
+            for result in data["results"]:
+                for comp in result["address_components"]:
+                    if "route" in comp["types"]:
+                        return comp["long_name"]
+            # fallback: formatted address
             return data["results"][0].get("formatted_address", "Unknown")
-    except:
-        pass
+    except Exception as e:
+        print("Google API error:", e)
     return "Unknown"
 
-# --- POSTCODE API ---
+# --- POSTCODE LOOKUP ---
 @st.cache_data
 def get_postcode_info(lat: float, lon: float):
-    """Get UK postcode information"""
+    """Get UK postcode information via postcodes.io"""
     try:
-        response = requests.get(
-            f"https://api.postcodes.io/postcodes?lon={lon}&lat={lat}", timeout=5
-        )
+        response = requests.get(f"https://api.postcodes.io/postcodes?lon={lon}&lat={lat}", timeout=5)
         data = response.json()
-        if data.get("status") == 200 and data["result"]:
+        if data.get("status") == 200 and data.get("result"):
             result = data["result"][0]
-            return (
-                result.get("postcode", "N/A"),
-                result.get("admin_ward", "N/A"),
-                result.get("admin_district", "N/A")
-            )
+            return result.get("postcode", "N/A"), result.get("admin_ward", "N/A"), result.get("admin_district", "N/A")
     except:
         pass
     return "N/A", "N/A", "N/A"
 
-# --- COORDINATE CONVERTER ---
+# --- COORDINATE CONVERSION ---
 @st.cache_resource
 def get_transformer():
     return Transformer.from_crs("epsg:4326", "epsg:27700")
@@ -59,17 +59,17 @@ def convert_to_british_grid(lat: float, lon: float):
     except:
         return None, None
 
-# --- CALCULATOR ---
+# --- POWER CALCULATION ---
 def calculate_kva(fast, rapid, ultra, fast_kw=22, rapid_kw=60, ultra_kw=150):
     total_kw = fast * fast_kw + rapid * rapid_kw + ultra * ultra_kw
     return round(total_kw / 0.9, 2)
 
+# --- SITE PROCESSING ---
 def process_site(lat, lon, fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw):
     easting, northing = convert_to_british_grid(lat, lon)
     postcode, ward, district = get_postcode_info(lat, lon)
-    street = get_street_name_google(lat, lon)  # <-- Google API
+    street = get_street_name_google(lat, lon)
     kva = calculate_kva(fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw)
-    
     return {
         "latitude": lat, "longitude": lon, "easting": easting, "northing": northing,
         "postcode": postcode, "ward": ward, "district": district, "street": street,
@@ -77,7 +77,7 @@ def process_site(lat, lon, fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw):
         "required_kva": kva
     }
 
-# --- MAP FUNCTIONS ---
+# --- MAPS ---
 def create_single_map(site):
     m = folium.Map(location=[site["latitude"], site["longitude"]], zoom_start=15)
     popup = f"{site['street']}, {site['postcode']}<br>Power: {site['required_kva']} kVA"
@@ -101,12 +101,12 @@ st.title("🔋 EV Charger Site Generator")
 
 # Sidebar
 with st.sidebar:
-    st.header("⚙️ Settings")
+    st.header("⚙️ Charger Power Settings")
     fast_kw = st.number_input("Fast Charger Power (kW)", value=22)
     rapid_kw = st.number_input("Rapid Charger Power (kW)", value=60)
     ultra_kw = st.number_input("Ultra Charger Power (kW)", value=150)
 
-# Main tabs
+# Tabs
 tab1, tab2 = st.tabs(["📍 Single Site", "📁 Batch Processing"])
 
 # --- SINGLE SITE ---
@@ -139,7 +139,6 @@ with tab1:
             st.write(f"**Grid Ref:** {site['easting']:,}, {site['northing']:,}" if site['easting'] else "**Grid Ref:** N/A")
             st.write(f"**Street:** {site['street']}")
             st.write(f"**Postcode:** {site['postcode']}")
-        
         with col2:
             st.write(f"**Fast:** {site['fast_chargers']}, **Rapid:** {site['rapid_chargers']}, **Ultra:** {site['ultra_chargers']}")
             st.write(f"**Total Chargers:** {site['fast_chargers'] + site['rapid_chargers'] + site['ultra_chargers']}")
@@ -147,9 +146,7 @@ with tab1:
         
         st.subheader("🗺️ Site Location")
         st_folium(create_single_map(site), width=700, height=400)
-        
-        df = pd.DataFrame([site])
-        st.download_button("📥 Download CSV", df.to_csv(index=False), "ev_site.csv")
+        st.download_button("📥 Download CSV", pd.DataFrame([site]).to_csv(index=False), "ev_site.csv")
         
         if st.button("🔄 Clear Results"):
             del st.session_state["single_site"]
@@ -171,7 +168,8 @@ with tab2:
         df_in = pd.read_csv(uploaded)
         required = {"latitude", "longitude", "fast", "rapid", "ultra"}
         if not required.issubset(df_in.columns):
-            st.error(f"❌ Missing columns: {', '.join(required - set(df_in.columns))}")
+            missing = required - set(df_in.columns)
+            st.error(f"❌ Missing columns: {', '.join(missing)}")
         else:
             st.success(f"✅ Loaded {len(df_in)} sites")
             st.dataframe(df_in.head())
@@ -186,7 +184,8 @@ with tab2:
                         fast_kw, rapid_kw, ultra_kw
                     )
                     results.append(site)
-                    progress.progress((i + 1)/len(df_in))
+                    progress.progress((i+1)/len(df_in))
+                    time.sleep(0.1)  # rate limiting
                 st.session_state["batch_results"] = results
             
             if "batch_results" in st.session_state:
@@ -194,24 +193,19 @@ with tab2:
                 df_out = pd.DataFrame(results)
                 
                 col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Total Sites", len(results))
-                with col2:
-                    total_chargers = sum(s['fast_chargers'] + s['rapid_chargers'] + s['ultra_chargers'] for s in results)
-                    st.metric("Total Chargers", total_chargers)
-                with col3:
-                    total_power = sum(s['required_kva'] for s in results)
-                    st.metric("Total Power", f"{total_power:,.0f} kVA")
+                col1.metric("Total Sites", len(results))
+                total_chargers = sum(s['fast_chargers'] + s['rapid_chargers'] + s['ultra_chargers'] for s in results)
+                col2.metric("Total Chargers", total_chargers)
+                total_power = sum(s['required_kva'] for s in results)
+                col3.metric("Total Power", f"{total_power:,.0f} kVA")
                 
                 st.subheader("📋 Results")
                 st.dataframe(df_out)
                 
                 st.subheader("🗺️ All Sites Map")
-                batch_map = create_batch_map(results)
-                if batch_map:
-                    st_folium(batch_map, width=700, height=500)
+                st_folium(create_batch_map(results), width=700, height=500)
                 
-                st.download_button("📥 Download Results", df_out.to_csv(index=False), "batch_results.csv")
+                st.download_button("📥 Download CSV", df_out.to_csv(index=False), "batch_results.csv")
                 
                 if st.button("🔄 Clear Batch Results"):
                     del st.session_state["batch_results"]
