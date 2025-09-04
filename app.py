@@ -36,20 +36,16 @@ def get_street_name(lat: float, lon: float) -> str:
         
         response = requests.get(url, params=params, timeout=10)
         
-        # Check if request was successful
         if response.status_code != 200:
             st.warning(f"Google API returned status code: {response.status_code}")
             return "Unknown"
             
         data = response.json()
-        
-        # Debug: Show API response status
-        st.write(f"Google API Status: {data.get('status')}")
-        
+        st.write(f"Google API Status: {data.get('status')}")  # Debug
+
         if data.get("status") == "OK":
             results = data.get("results", [])
             if results:
-                # Try to get street name from address components
                 for result in results:
                     address_components = result.get("address_components", [])
                     street_name = None
@@ -62,20 +58,16 @@ def get_street_name(lat: float, lon: float) -> str:
                         elif "street_number" in types:
                             street_number = component["long_name"]
                     
-                    # If we found a street name, return it (with number if available)
                     if street_name:
                         if street_number:
                             return f"{street_number} {street_name}"
                         return street_name
                 
-                # Fallback: try to extract street from formatted address
                 formatted_address = results[0].get("formatted_address", "")
                 if formatted_address and formatted_address != "Unknown":
-                    # Take the first part before the first comma
                     street_part = formatted_address.split(',')[0].strip()
                     if street_part:
                         return street_part
-                
                 return formatted_address[:50] + "..." if len(formatted_address) > 50 else formatted_address
         
         elif data.get("status") == "ZERO_RESULTS":
@@ -170,18 +162,16 @@ with st.sidebar:
     rapid_kw = st.number_input("Rapid Charger Power (kW)", value=60)
     ultra_kw = st.number_input("Ultra Charger Power (kW)", value=150)
     
-    # Debug section
     with st.expander("🔧 Debug Info"):
         if st.button("Test Google API"):
-            test_lat, test_lon = 51.5074, -0.1278  # London
+            test_lat, test_lon = 51.5074, -0.1278
             st.write(f"Testing with coordinates: {test_lat}, {test_lon}")
             test_result = get_street_name(test_lat, test_lon)
             st.write(f"Result: {test_result}")
 
-# Main tabs
+# --- SINGLE SITE TAB ---
 tab1, tab2 = st.tabs(["📍 Single Site", "📁 Batch Processing"])
 
-# --- SINGLE SITE TAB ---
 with tab1:
     st.subheader("Analyze Single Site")
     
@@ -223,12 +213,10 @@ with tab1:
             st.write(f"**Total Chargers:** {site['fast_chargers'] + site['rapid_chargers'] + site['ultra_chargers']}")
             st.markdown(f"**Required kVA:** <span style='color: #1f77b4; font-weight: bold;'>{site['required_kva']}</span>", unsafe_allow_html=True)
         
-        # Map
         st.subheader("🗺️ Site Location")
         site_map = create_single_map(site)
         st_folium(site_map, width=700, height=400)
         
-        # Download
         df = pd.DataFrame([site])
         st.download_button("📥 Download CSV", df.to_csv(index=False), "ev_site.csv", "text/csv")
         
@@ -240,7 +228,6 @@ with tab1:
 with tab2:
     st.subheader("Process Multiple Sites")
     
-    # Template
     template = pd.DataFrame({
         "latitude": [51.5074, 53.4808, 55.9533],
         "longitude": [-0.1278, -2.2426, -3.1883],
@@ -248,7 +235,6 @@ with tab2:
     })
     st.download_button("📥 Download Template", template.to_csv(index=False), "template.csv", "text/csv")
     
-    # File upload
     uploaded = st.file_uploader("Upload CSV with columns: latitude, longitude, fast, rapid, ultra", type="csv")
     
     if uploaded:
@@ -268,7 +254,6 @@ with tab2:
                 results = []
                 errors = []
                 
-                # Add delay selector for batch processing
                 st.info("💡 Processing with 1-second delays between requests to avoid API limits")
                 
                 for i, row in df_in.iterrows():
@@ -279,11 +264,10 @@ with tab2:
                         site = process_site(
                             float(row["latitude"]), float(row["longitude"]),
                             int(row.get("fast", 0)), int(row.get("rapid", 0)), int(row.get("ultra", 0)),
-                            fast_kw, rapid_kw, ultra_kw, False
+                            fast_kw, rapid_kw, ultra_kw
                         )
                         results.append(site)
                         
-                        # Show progress for street name lookup
                         if site['street'] in ['Quota exceeded', 'API denied', 'Timeout']:
                             errors.append(f"Site {i+1}: {site['street']}")
                             
@@ -291,7 +275,6 @@ with tab2:
                         error_msg = str(e)
                         errors.append(f"Site {i+1}: {error_msg}")
                         st.warning(f"Error processing site {i+1}: {error_msg}")
-                        # Add placeholder data for failed sites
                         results.append({
                             "latitude": row["latitude"], "longitude": row["longitude"], 
                             "easting": None, "northing": None,
@@ -301,22 +284,19 @@ with tab2:
                             "required_kva": 0
                         })
                     
-                    # Longer delay for batch processing to avoid rate limits
                     time.sleep(1.0)
                 
                 status.text("Processing complete!")
                 
-                # Show error summary
                 if errors:
                     st.warning(f"⚠️ {len(errors)} sites had issues:")
-                    for error in errors[:5]:  # Show first 5 errors
+                    for error in errors[:5]:
                         st.text(f"• {error}")
                     if len(errors) > 5:
                         st.text(f"... and {len(errors) - 5} more errors")
                 
                 st.session_state["batch_results"] = results
             
-            # Display batch results
             if "batch_results" in st.session_state:
                 results = st.session_state["batch_results"]
                 df_out = pd.DataFrame(results)
