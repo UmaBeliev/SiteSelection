@@ -165,12 +165,31 @@ with tab1:
             st.write(f"**Location:** {site['latitude']:.6f}, {site['longitude']:.6f}")
             st.write(f"**Grid Ref:** {site['easting']:,}, {site['northing']:,}" if site['easting'] else "**Grid Ref:** N/A")
             st.write(f"**Street:** {site['street']}")
+            st.write(f"**Address:** {site.get('formatted_address', 'N/A')}")
             st.write(f"**Postcode:** {site['postcode']}")
             st.write(f"**Elevation:** {site.get('elevation', 'N/A')}")
-            st.write(f"**Land Use:** {site.get('land_use', 'Unknown')}")
         
         with col2:
             st.write(f"**Fast:** {site['fast_chargers']}, **Rapid:** {site['rapid_chargers']}, **Ultra:** {site['ultra_chargers']}")
+            st.write(f"**Total Chargers:** {site['fast_chargers'] + site['rapid_chargers'] + site['ultra_chargers']}")
+            st.markdown(f"**Required kVA:** <span style='color: #1f77b4; font-weight: bold;'>{site['required_kva']}</span>", unsafe_allow_html=True)
+            st.write(f"**Land Use:** {site.get('land_use', 'Unknown')}")
+            st.write(f"**Area Type:** {site.get('rural_urban', 'Unknown')}")
+            st.write(f"**Nearby Facilities:** {site.get('nearby_facilities_count', 0)}")
+            
+        # API Status indicator
+        if site['street'].startswith(('No API Key', 'API Error', 'Error')):
+            st.warning(f"⚠️ Google API Issue: {site['street']}")
+        elif site['street'] not in ['Unknown', 'Location Unknown']:
+            st.info("✅ Using Google APIs for enhanced location data")
+            
+        # Nearby facilities details
+        if site.get('nearby_facilities') and site['nearby_facilities'] != 'None found':
+            with st.expander("🏪 Nearby Facilities Details"):
+                st.write(f"**Found {site['nearby_facilities_count']} facilities within 500m:**")
+                st.write(site['nearby_facilities'])
+                if site.get('amenity_summary') != 'None':
+                    st.write(f"**Breakdown:** {site['amenity_summary']}")Ultra:** {site['ultra_chargers']}")
             st.write(f"**Total Chargers:** {site['fast_chargers'] + site['rapid_chargers'] + site['ultra_chargers']}")
             st.markdown(f"**Required kVA:** <span style='color: #1f77b4; font-weight: bold;'>{site['required_kva']}</span>", unsafe_allow_html=True)
             st.write(f"**Area Type:** {site.get('rural_urban', 'Unknown')}")
