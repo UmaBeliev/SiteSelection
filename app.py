@@ -11,25 +11,18 @@ import time
 def get_postcode_info(lat: float, lon: float):
     """Get UK postcode information"""
     try:
-        response = requests.get(
-            f"https://api.postcodes.io/postcodes?lon={lon}&lat={lat}", timeout=5
-        )
+        response = requests.get(f"https://api.postcodes.io/postcodes?lon={lon}&lat={lat}", timeout=5)
         data = response.json()
         if data.get("status") == 200 and data["result"]:
             result = data["result"][0]
-            return (
-                result.get("postcode", "N/A"),
-                result.get("admin_ward", "N/A"),
-                result.get("admin_district", "N/A")
-            )
+            return result.get("postcode", "N/A"), result.get("admin_ward", "N/A"), result.get("admin_district", "N/A")
     except:
         pass
     return "N/A", "N/A", "N/A"
 
 @st.cache_data
 def get_street_name(lat: float, lon: float) -> str:
-    """Get street name via reverse geocoding with a 1-second delay"""
-    time.sleep(1)  # <-- Slow down requests to Nominatim
+    """Get street name via reverse geocoding"""
     try:
         response = requests.get(
             "https://nominatim.openstreetmap.org/reverse",
@@ -39,6 +32,8 @@ def get_street_name(lat: float, lon: float) -> str:
         )
         data = response.json()
         address = data.get("address", {})
+        
+        # Try multiple address components
         for key in ["road", "pedestrian", "residential", "footway", "path", "neighbourhood", "suburb"]:
             if key in address:
                 return address[key]
@@ -68,7 +63,7 @@ def process_site(lat, lon, fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw):
     """Process a single site and return all data"""
     easting, northing = convert_to_british_grid(lat, lon)
     postcode, ward, district = get_postcode_info(lat, lon)
-    street = get_street_name(lat, lon)  # <-- slow Nominatim request
+    street = get_street_name(lat, lon)
     kva = calculate_kva(fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw)
     
     return {
@@ -103,6 +98,11 @@ def create_batch_map(sites):
 st.set_page_config(page_title="EV Charger Site Generator", page_icon="🔋", layout="wide")
 st.title("🔋 EV Charger Site Generator")
 
+# Clear any old session state with different structure
+if "batch_results" in st.session_state:
+    if st.session_state["batch_results"] and not all(isinstance(item, dict) for item in st.session_state["batch_results"]):
+        del st.session_state["batch_results"]
+
 # Sidebar
 with st.sidebar:
     st.header("⚙️ Settings")
@@ -134,25 +134,63 @@ with tab1:
         except ValueError:
             st.error("❌ Enter valid coordinates")
     
+    # Display results
     if "single_site" in st.session_state:
         site = st.session_state["single_site"]
         st.success("✅ Site processed successfully!")
         
+        # Debug info if enabled
+        if debug_mode:
+            with st.expander("🔧 API Debug Info"):
+                st.write("**Testing street name API directly:**")
+                try:
+                    test_response = requests.get(
+                        "https://nominatim.openstreetmap.org/reverse",
+                        params={"format": "json", "lat": site['latitude'], "lon": site['longitude'], "zoom": 18, "addressdetails": 1},
+                        headers={"User-Agent": "EV-Charger-Site-Generator/1.0"},
+                        timeout=10
+                    )
+                    st.write(f"Status Code: {test_response.status_code}")
+                    if test_response.status_code == 200:
+                        test_data = test_response.json()
+                        st.json(test_data)
+                    else:
+                        st.write(f"Response: {test_response.text[:200]}")
+                except Exception as e:
+                    st.write(f"API Test Error: {str(e)}")
+        
+        # Site details
         col1, col2 = st.columns(2)
         with col1:
             st.write(f"**Location:** {site['latitude']:.6f}, {site['longitude']:.6f}")
             st.write(f"**Grid Ref:** {site['easting']:,}, {site['northing']:,}" if site['easting'] else "**Grid Ref:** N/A")
             st.write(f"**Street:** {site['street']}")
             st.write(f"**Postcode:** {site['postcode']}")
+            st.write(f"**Elevation:** {site.get('elevation', 'N/A')}")
+            st.write(f"**Land Use:** {site.get('land_use', 'Unknown')}")
         
         with col2:
             st.write(f"**Fast:** {site['fast_chargers']}, **Rapid:** {site['rapid_chargers']}, **Ultra:** {site['ultra_chargers']}")
             st.write(f"**Total Chargers:** {site['fast_chargers'] + site['rapid_chargers'] + site['ultra_chargers']}")
             st.markdown(f"**Required kVA:** <span style='color: #1f77b4; font-weight: bold;'>{site['required_kva']}</span>", unsafe_allow_html=True)
+            st.write(f"**Area Type:** {site.get('rural_urban', 'Unknown')}")
+            st.write(f"**Population:** {site.get('population', 'N/A')}")
+            st.write(f"**Nearby Facilities:** {site.get('nearby_facilities_count', 0)}")
+            
+        # Nearby facilities details
+        if site.get('nearby_facilities') and site['nearby_facilities'] != 'None found':
+            with st.expander("🏪 Nearby Facilities Details"):
+                st.write(f"**Found {site['nearby_facilities_count']} facilities within 500m:**")
+                st.write(site['nearby_facilities'])
+                if site.get('amenity_summary') != 'None':
+                    st.write(f"**Breakdown:** {site['amenity_summary']}")
         
+        # Map
         st.subheader("🗺️ Site Location")
-        st_folium(create_single_map(site), width=700, height=400)
+        site_map = create_single_map(site)
+        st_folium(site_map, width=700, height=400)
         
+        # Download
         df = pd.DataFrame([site])
         st.download_button("📥 Download CSV", df.to_csv(index=False), "ev_site.csv")
         
@@ -164,6 +202,7 @@ with tab1:
 with tab2:
     st.subheader("Process Multiple Sites")
     
+    # Template
     template = pd.DataFrame({
         "latitude": [51.5074, 53.4808, 55.9533],
         "longitude": [-0.1278, -2.2426, -3.1883],
@@ -171,6 +210,7 @@ with tab2:
     })
     st.download_button("📥 Download Template", template.to_csv(index=False), "template.csv")
     
+    # File upload
     uploaded = st.file_uploader("Upload CSV with columns: latitude, longitude, fast, rapid, ultra", type="csv")
     
     if uploaded:
@@ -196,13 +236,16 @@ with tab2:
                         fast_kw, rapid_kw, ultra_kw
                     )
                     results.append(site)
+                    time.sleep(0.2)  # Rate limiting
                 
                 st.session_state["batch_results"] = results
             
+            # Display batch results
             if "batch_results" in st.session_state:
                 results = st.session_state["batch_results"]
                 df_out = pd.DataFrame(results)
                 
+                # Summary
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     st.metric("Total Sites", len(results))
@@ -213,14 +256,17 @@ with tab2:
                     total_power = sum(s['required_kva'] for s in results)
                     st.metric("Total Power", f"{total_power:,.0f} kVA")
                 
+                # Results table
                 st.subheader("📋 Results")
                 st.dataframe(df_out)
                 
+                # Batch map
                 st.subheader("🗺️ All Sites Map")
                 batch_map = create_batch_map(results)
                 if batch_map:
                     st_folium(batch_map, width=700, height=500)
                 
+                # Download
                 st.download_button("📥 Download Results", df_out.to_csv(index=False), "batch_results.csv")
                 
                 if st.button("🔄 Clear Batch Results"):
