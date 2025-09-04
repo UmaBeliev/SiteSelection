@@ -11,7 +11,7 @@ import time
 # ==============================
 GOOGLE_API_KEY = st.secrets["google_api_key"]
 TOMTOM_API_KEY = st.secrets.get("tomtom_api_key", "")
-EV_API_KEY = st.secrets.get("ev_api_key", "")
+# EV_API_KEY = st.secrets.get("ev_api_key", "")
 
 # ==============================
 #           UTILITIES
@@ -85,7 +85,7 @@ def get_ev_availability(lat, lon):
     if not EV_API_KEY: return {"available":None,"occupied":None,"total":None}
     try:
         url = "https://api.openchargemap.io/v3/poi/"
-        params = {"latitude":lat,"longitude":lon,"distance":0.5,"distanceunit":"KM","maxresults":1,"key":EV_API_KEY}
+        params = {"latitude":lat,"longitude":lon,"distance":0.5,"distanceunit":"KM","maxresults":1,"key":TOMTOM_API_KEY}
         r = requests.get(url, params=params, timeout=10)
         data = r.json()
         if data:
