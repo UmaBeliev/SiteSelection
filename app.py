@@ -15,7 +15,6 @@ TOMTOM_API_KEY = st.secrets.get("tomtom_api_key", "")
 # ==============================
 #           UTILITIES
 # ==============================
-
 @st.cache_data
 def get_postcode_info(lat: float, lon: float):
     try:
@@ -63,6 +62,7 @@ def get_street_name(lat: float, lon: float, debug=False) -> str:
     except Exception as e:
         return f"Error: {e}"
 
+# --- TomTom Traffic ---
 def get_tomtom_traffic(lat, lon, api_key):
     try:
         url = "https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json"
@@ -81,26 +81,24 @@ def get_tomtom_traffic(lat, lon, api_key):
     except Exception as e:
         return {"speed": None, "freeFlow": None, "congestion": f"Error: {e}"}
 
-def get_osm_road_width(lat, lon, radius=30):
+# --- TomTom Road Width ---
+def get_tomtom_road_width(lat, lon, api_key):
+    """
+    Fetch road width from TomTom Flow Segment API.
+    """
     try:
-        query = f"""
-        [out:json];
-        way(around:{radius},{lat},{lon})[highway];
-        out tags 1;
-        """
-        url = "https://overpass-api.de/api/interpreter"
-        r = requests.get(url, params={"data": query}, timeout=15)
+        url = "https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json"
+        params = {"point": f"{lat},{lon}", "key": api_key}
+        r = requests.get(url, params=params, timeout=10)
         if r.status_code == 200:
-            for el in r.json().get("elements", []):
-                tags = el.get("tags", {})
-                if "width" in tags:
-                    return tags["width"]
-                elif "sidewalk:width" in tags:
-                    return tags["sidewalk:width"]
+            flow = r.json().get("flowSegmentData", {})
+            width = flow.get("roadWidth")  # may return None
+            return width if width else "Unknown"
         return "Unknown"
     except Exception as e:
         return f"Error: {e}"
 
+# --- OSM Amenities ---
 def get_osm_amenities(lat, lon, radius=100):
     try:
         query = f"""
@@ -117,6 +115,7 @@ def get_osm_amenities(lat, lon, radius=100):
     except Exception as e:
         return f"Error: {e}"
 
+# --- Coordinate Conversion ---
 @st.cache_resource
 def get_transformer():
     return Transformer.from_crs("epsg:4326", "epsg:27700")
@@ -129,17 +128,22 @@ def convert_to_british_grid(lat, lon):
     except:
         return None, None
 
+# --- Power Calculation ---
 def calculate_kva(fast, rapid, ultra, fast_kw=22, rapid_kw=60, ultra_kw=150):
     return round((fast * fast_kw + rapid * rapid_kw + ultra * ultra_kw) / 0.9, 2)
 
+# ==============================
+#         PROCESS SITE
+# ==============================
 def process_site(lat, lon, fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw, debug=False):
     easting, northing = convert_to_british_grid(lat, lon)
     postcode, ward, district = get_postcode_info(lat, lon)
     street = get_street_name(lat, lon, debug)
     kva = calculate_kva(fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw)
     traffic = get_tomtom_traffic(lat, lon, TOMTOM_API_KEY) if TOMTOM_API_KEY else {"speed": None, "freeFlow": None, "congestion": "N/A"}
-    road_width = get_osm_road_width(lat, lon)
+    road_width = get_tomtom_road_width(lat, lon, TOMTOM_API_KEY) if TOMTOM_API_KEY else "N/A"
     amenities = get_osm_amenities(lat, lon)
+
     return {
         "latitude": lat, "longitude": lon,
         "easting": easting, "northing": northing,
