@@ -32,8 +32,6 @@ def get_street_name(lat: float, lon: float) -> str:
         )
         data = response.json()
         address = data.get("address", {})
-        
-        # Try multiple address components
         for key in ["road", "pedestrian", "residential", "footway", "path", "neighbourhood", "suburb"]:
             if key in address:
                 return address[key]
@@ -83,22 +81,19 @@ def create_single_map(site):
 def create_batch_map(sites):
     if not sites:
         return None
-    
     center_lat = sum(s["latitude"] for s in sites) / len(sites)
     center_lon = sum(s["longitude"] for s in sites) / len(sites)
     m = folium.Map(location=[center_lat, center_lon], zoom_start=6)
-    
     for i, site in enumerate(sites):
         popup = f"Site {i+1}: {site['street']}<br>Power: {site['required_kva']} kVA"
         folium.Marker([site["latitude"], site["longitude"]], popup=popup, tooltip=f"Site {i+1}").add_to(m)
-    
     return m
 
 # --- STREAMLIT APP ---
 st.set_page_config(page_title="EV Charger Site Generator", page_icon="🔋", layout="wide")
 st.title("🔋 EV Charger Site Generator")
 
-# Clear any old session state with different structure
+# Clear old session state
 if "batch_results" in st.session_state:
     if st.session_state["batch_results"] and not all(isinstance(item, dict) for item in st.session_state["batch_results"]):
         del st.session_state["batch_results"]
@@ -134,75 +129,21 @@ with tab1:
         except ValueError:
             st.error("❌ Enter valid coordinates")
     
-    # Display results
     if "single_site" in st.session_state:
         site = st.session_state["single_site"]
         st.success("✅ Site processed successfully!")
         
-        # Debug info if enabled
-        if debug_mode:
-            with st.expander("🔧 API Debug Info"):
-                st.write("**Testing street name API directly:**")
-                try:
-                    test_response = requests.get(
-                        "https://nominatim.openstreetmap.org/reverse",
-                        params={"format": "json", "lat": site['latitude'], "lon": site['longitude'], "zoom": 18, "addressdetails": 1},
-                        headers={"User-Agent": "EV-Charger-Site-Generator/1.0"},
-                        timeout=10
-                    )
-                    st.write(f"Status Code: {test_response.status_code}")
-                    if test_response.status_code == 200:
-                        test_data = test_response.json()
-                        st.json(test_data)
-                    else:
-                        st.write(f"Response: {test_response.text[:200]}")
-                except Exception as e:
-                    st.write(f"API Test Error: {str(e)}")
-        
-        # Site details
         col1, col2 = st.columns(2)
         with col1:
             st.write(f"**Location:** {site['latitude']:.6f}, {site['longitude']:.6f}")
             st.write(f"**Grid Ref:** {site['easting']:,}, {site['northing']:,}" if site['easting'] else "**Grid Ref:** N/A")
             st.write(f"**Street:** {site['street']}")
-            st.write(f"**Address:** {site.get('formatted_address', 'N/A')}")
             st.write(f"**Postcode:** {site['postcode']}")
-            st.write(f"**Elevation:** {site.get('elevation', 'N/A')}")
         
         with col2:
             st.write(f"**Fast:** {site['fast_chargers']}, **Rapid:** {site['rapid_chargers']}, **Ultra:** {site['ultra_chargers']}")
             st.write(f"**Total Chargers:** {site['fast_chargers'] + site['rapid_chargers'] + site['ultra_chargers']}")
             st.markdown(f"**Required kVA:** <span style='color: #1f77b4; font-weight: bold;'>{site['required_kva']}</span>", unsafe_allow_html=True)
-            st.write(f"**Land Use:** {site.get('land_use', 'Unknown')}")
-            st.write(f"**Area Type:** {site.get('rural_urban', 'Unknown')}")
-            st.write(f"**Nearby Facilities:** {site.get('nearby_facilities_count', 0)}")
-            
-        # API Status indicator
-        if site['street'].startswith(('No API Key', 'API Error', 'Error')):
-            st.warning(f"⚠️ Google API Issue: {site['street']}")
-        elif site['street'] not in ['Unknown', 'Location Unknown']:
-            st.info("✅ Using Google APIs for enhanced location data")
-            
-        # Nearby facilities details
-        if site.get('nearby_facilities') and site['nearby_facilities'] != 'None found':
-            with st.expander("🏪 Nearby Facilities Details"):
-                st.write(f"**Found {site['nearby_facilities_count']} facilities within 500m:**")
-                st.write(site['nearby_facilities'])
-                if site.get('amenity_summary') != 'None':
-                    st.write(f"**Breakdown:** {site['amenity_summary']}")Ultra:** {site['ultra_chargers']}")
-            st.write(f"**Total Chargers:** {site['fast_chargers'] + site['rapid_chargers'] + site['ultra_chargers']}")
-            st.markdown(f"**Required kVA:** <span style='color: #1f77b4; font-weight: bold;'>{site['required_kva']}</span>", unsafe_allow_html=True)
-            st.write(f"**Area Type:** {site.get('rural_urban', 'Unknown')}")
-            st.write(f"**Population:** {site.get('population', 'N/A')}")
-            st.write(f"**Nearby Facilities:** {site.get('nearby_facilities_count', 0)}")
-            
-        # Nearby facilities details
-        if site.get('nearby_facilities') and site['nearby_facilities'] != 'None found':
-            with st.expander("🏪 Nearby Facilities Details"):
-                st.write(f"**Found {site['nearby_facilities_count']} facilities within 500m:**")
-                st.write(site['nearby_facilities'])
-                if site.get('amenity_summary') != 'None':
-                    st.write(f"**Breakdown:** {site['amenity_summary']}")
         
         # Map
         st.subheader("🗺️ Site Location")
@@ -255,7 +196,7 @@ with tab2:
                         fast_kw, rapid_kw, ultra_kw
                     )
                     results.append(site)
-                    time.sleep(0.2)  # Rate limiting
+                    time.sleep(0.2)
                 
                 st.session_state["batch_results"] = results
             
@@ -264,7 +205,6 @@ with tab2:
                 results = st.session_state["batch_results"]
                 df_out = pd.DataFrame(results)
                 
-                # Summary
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     st.metric("Total Sites", len(results))
@@ -275,17 +215,14 @@ with tab2:
                     total_power = sum(s['required_kva'] for s in results)
                     st.metric("Total Power", f"{total_power:,.0f} kVA")
                 
-                # Results table
                 st.subheader("📋 Results")
                 st.dataframe(df_out)
                 
-                # Batch map
                 st.subheader("🗺️ All Sites Map")
                 batch_map = create_batch_map(results)
                 if batch_map:
                     st_folium(batch_map, width=700, height=500)
                 
-                # Download
                 st.download_button("📥 Download Results", df_out.to_csv(index=False), "batch_results.csv")
                 
                 if st.button("🔄 Clear Batch Results"):
