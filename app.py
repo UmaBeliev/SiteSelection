@@ -16,7 +16,6 @@ EV_API_KEY = st.secrets.get("ev_api_key", "")
 # ==============================
 #           UTILITIES
 # ==============================
-
 @st.cache_data
 def get_postcode_info(lat: float, lon: float):
     try:
@@ -29,13 +28,12 @@ def get_postcode_info(lat: float, lon: float):
     return "N/A","N/A","N/A"
 
 @st.cache_data
-def get_street_name(lat: float, lon: float, debug=False):
+def get_street_name(lat: float, lon: float):
     try:
         url = "https://maps.googleapis.com/maps/api/geocode/json"
         params = {"latlng": f"{lat},{lon}", "key": GOOGLE_API_KEY, "result_type":"street_address|route|premise"}
         r = requests.get(url, params=params, timeout=10)
         data = r.json()
-        if debug: st.write(data)
         if data.get("status")=="OK":
             results = data.get("results",[])
             if results:
@@ -186,8 +184,9 @@ with st.sidebar:
     ultra_kw = st.number_input("Ultra Charger Power (kW)", value=150)
     show_traffic = st.checkbox("Show Google Traffic Layer", value=False)
 
-# Single Site
 tab1, tab2 = st.tabs(["📍 Single Site","📁 Batch Processing"])
+
+# Single site
 with tab1:
     st.subheader("Analyze Single Site")
     lat = st.text_input("Latitude","51.5074")
@@ -195,8 +194,11 @@ with tab1:
     fast = st.number_input("Fast Chargers",0)
     rapid = st.number_input("Rapid Chargers",0)
     ultra = st.number_input("Ultra Chargers",0)
-    if st.button("Analyze"):
+    if st.button("Analyze Single Site"):
         site = process_site(float(lat),float(lon),fast,rapid,ultra,fast_kw,rapid_kw,ultra_kw)
+        st.session_state["single_site"] = site
+    if "single_site" in st.session_state:
+        site = st.session_state["single_site"]
         st.metric("Required kVA", site["required_kva"])
         st.metric("Traffic", site["traffic_congestion"])
         st.metric("Road Width", site["road_width"])
@@ -204,7 +206,7 @@ with tab1:
         st.write(site)
         st_folium(create_single_map(site,show_traffic),width=700,height=500)
 
-# Batch Processing
+# Batch
 with tab2:
     st.subheader("Batch Processing")
     uploaded = st.file_uploader("Upload CSV with latitude,longitude,fast,rapid,ultra",type="csv")
@@ -214,15 +216,22 @@ with tab2:
             results=[]
             progress=st.progress(0)
             for i,row in df.iterrows():
-                site = process_site(float(row["latitude"]),float(row["longitude"]),
-                                    int(row.get("fast",0)),int(row.get("rapid",0)),int(row.get("ultra",0)),
-                                    fast_kw,rapid_kw,ultra_kw)
+                try:
+                    site = process_site(float(row["latitude"]),float(row["longitude"]),
+                                        int(row.get("fast",0)),int(row.get("rapid",0)),int(row.get("ultra",0)),
+                                        fast_kw,rapid_kw,ultra_kw)
+                except Exception as e:
+                    site = {"latitude":row.get("latitude"),"longitude":row.get("longitude"),
+                            "street":f"Error: {e}","postcode":"Error","ward":"Error","district":"Error",
+                            "fast_chargers":row.get("fast",0),"rapid_chargers":row.get("rapid",0),
+                            "ultra_chargers":row.get("ultra",0),"required_kva":0,
+                            "traffic_speed":None,"traffic_freeflow":None,"traffic_congestion":"Error",
+                            "road_width":None,"amenities":None,"ev_available":None,"ev_occupied":None,"ev_total":None}
                 results.append(site)
                 progress.progress((i+1)/len(df))
-            st.success("Processing Complete!")
             st.session_state["batch_results"]=results
     if "batch_results" in st.session_state:
         df_out=pd.DataFrame(st.session_state["batch_results"])
         st.dataframe(df_out)
         st_folium(create_batch_map(st.session_state["batch_results"],show_traffic),width=700,height=500)
-        st.download_button("Download CSV", df_out.to_csv(index=False), "batch_results.csv","text/csv")
+        st.download_button("Download CSV", df_out.to_csv(index=False),"batch_results.csv","text/csv")
