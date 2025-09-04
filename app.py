@@ -6,6 +6,9 @@ from streamlit_folium import st_folium
 from pyproj import Transformer
 import time
 
+# --- GOOGLE API KEY ---
+GOOGLE_API_KEY = st.secrets["api_key"]
+
 # --- CACHED API FUNCTIONS ---
 @st.cache_data
 def get_postcode_info(lat: float, lon: float):
@@ -22,19 +25,25 @@ def get_postcode_info(lat: float, lon: float):
 
 @st.cache_data
 def get_street_name(lat: float, lon: float) -> str:
-    """Get street name via reverse geocoding"""
+    """Get street name using Google Maps Reverse Geocoding"""
     try:
-        response = requests.get(
-            "https://nominatim.openstreetmap.org/reverse",
-            params={"format": "json", "lat": lat, "lon": lon, "zoom": 18, "addressdetails": 1},
-            headers={"User-Agent": "EV-Site-App"},
-            timeout=5
-        )
+        url = "https://maps.googleapis.com/maps/api/geocode/json"
+        params = {
+            "latlng": f"{lat},{lon}",
+            "key": GOOGLE_API_KEY
+        }
+        response = requests.get(url, params=params, timeout=5)
         data = response.json()
-        address = data.get("address", {})
-        for key in ["road", "pedestrian", "residential", "footway", "path", "neighbourhood", "suburb"]:
-            if key in address:
-                return address[key]
+        
+        if data.get("status") == "OK":
+            results = data.get("results", [])
+            if results:
+                # Get the street name from address components
+                for comp in results[0]["address_components"]:
+                    if "route" in comp["types"]:
+                        return comp["long_name"]
+                # fallback to formatted address
+                return results[0].get("formatted_address", "Unknown")
     except:
         pass
     return "Unknown"
