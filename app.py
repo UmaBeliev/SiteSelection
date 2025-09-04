@@ -5,15 +5,18 @@ import folium
 from streamlit_folium import st_folium
 from pyproj import Transformer
 import time
-import random
 
-# --- GOOGLE API KEY ---
+# --- API KEYS ---
 GOOGLE_API_KEY = st.secrets["google_api_key"]
+TOMTOM_API_KEY = st.secrets.get("tomtom_api_key", "")
 
-# --- CACHE: Postcode info ---
+# =============================
+#           UTILITIES
+# =============================
+
+# --- Postcode Info ---
 @st.cache_data
 def get_postcode_info(lat: float, lon: float):
-    """Get UK postcode information"""
     try:
         response = requests.get(f"https://api.postcodes.io/postcodes?lon={lon}&lat={lat}", timeout=10)
         data = response.json()
@@ -21,61 +24,109 @@ def get_postcode_info(lat: float, lon: float):
             result = data["result"][0]
             return result.get("postcode", "N/A"), result.get("admin_ward", "N/A"), result.get("admin_district", "N/A")
     except Exception as e:
-        return "Error", "Error", str(e)
+        st.warning(f"Postcode API error: {str(e)}")
     return "N/A", "N/A", "N/A"
 
-# --- CACHE: Street name lookup ---
+# --- Google Maps Reverse Geocoding ---
 @st.cache_data
 def get_street_name(lat: float, lon: float, debug=False) -> str:
-    """Get street name using Google Maps Reverse Geocoding"""
     try:
         url = "https://maps.googleapis.com/maps/api/geocode/json"
-        params = {
-            "latlng": f"{lat},{lon}",
-            "key": GOOGLE_API_KEY,
-            "result_type": "street_address|route|premise"
-        }
+        params = {"latlng": f"{lat},{lon}", "key": GOOGLE_API_KEY, "result_type": "street_address|route|premise"}
         response = requests.get(url, params=params, timeout=10)
-        if response.status_code != 200:
-            return f"Error: HTTP {response.status_code}"
         data = response.json()
 
         if debug:
-            st.info(f"Google API Status: {data.get('status')}")
+            st.write(f"Google API Response: {data}")
 
-        status = data.get("status")
-        if status == "OK":
+        if data.get("status") == "OK":
             results = data.get("results", [])
             if results:
                 for result in results:
-                    street_name, street_number = None, None
-                    for comp in result.get("address_components", []):
-                        types = comp.get("types", [])
-                        if "route" in types:
-                            street_name = comp["long_name"]
-                        elif "street_number" in types:
-                            street_number = comp["long_name"]
-                    if street_name:
-                        return f"{street_number} {street_name}" if street_number else street_name
-                return results[0].get("formatted_address", "Unknown")
-        elif status == "ZERO_RESULTS":
-            return "No address found"
-        elif status == "OVER_QUERY_LIMIT":
+                    comps = result.get("address_components", [])
+                    street, number = None, None
+                    for c in comps:
+                        if "route" in c.get("types", []):
+                            street = c["long_name"]
+                        elif "street_number" in c.get("types", []):
+                            number = c["long_name"]
+                    if street:
+                        return f"{number} {street}" if number else street
+            return results[0].get("formatted_address", "Unknown")
+        elif data.get("status") == "OVER_QUERY_LIMIT":
             return "Quota exceeded"
-        elif status == "REQUEST_DENIED":
+        elif data.get("status") == "REQUEST_DENIED":
             return "API denied"
-        return f"API Error: {status}"
-    except requests.exceptions.Timeout:
-        return "Timeout"
+        elif data.get("status") == "ZERO_RESULTS":
+            return "No address found"
+        else:
+            return f"API Error: {data.get('status')}"
     except Exception as e:
-        return f"Error: {str(e)}"
+        return f"Error: {e}"
 
-# --- COORDINATE CONVERTER ---
+# --- TomTom Traffic ---
+def get_tomtom_traffic(lat, lon, api_key):
+    try:
+        url = "https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json"
+        params = {"point": f"{lat},{lon}", "key": api_key}
+        r = requests.get(url, params=params, timeout=10)
+        if r.status_code == 200:
+            flow = r.json().get("flowSegmentData", {})
+            speed, freeflow = flow.get("currentSpeed"), flow.get("freeFlowSpeed")
+            if speed and freeflow:
+                ratio = speed / freeflow
+                if ratio > 0.85: level = "Low"
+                elif ratio > 0.6: level = "Medium"
+                else: level = "High"
+                return {"speed": speed, "freeFlow": freeflow, "congestion": level}
+        return {"speed": None, "freeFlow": None, "congestion": "Unknown"}
+    except Exception as e:
+        return {"speed": None, "freeFlow": None, "congestion": f"Error: {e}"}
+
+# --- OSM Road Width ---
+def get_osm_road_width(lat, lon, radius=30):
+    try:
+        query = f"""
+        [out:json];
+        way(around:{radius},{lat},{lon})[highway];
+        out tags 1;
+        """
+        url = "https://overpass-api.de/api/interpreter"
+        r = requests.get(url, params={"data": query}, timeout=15)
+        if r.status_code == 200:
+            for el in r.json().get("elements", []):
+                tags = el.get("tags", {})
+                if "width" in tags:
+                    return tags["width"]
+                elif "sidewalk:width" in tags:
+                    return tags["sidewalk:width"]
+        return "Unknown"
+    except Exception as e:
+        return f"Error: {e}"
+
+# --- OSM Amenities ---
+def get_osm_amenities(lat, lon, radius=100):
+    try:
+        query = f"""
+        [out:json];
+        node(around:{radius},{lat},{lon})[amenity];
+        out;
+        """
+        url = "https://overpass-api.de/api/interpreter"
+        r = requests.get(url, params={"data": query}, timeout=15)
+        if r.status_code == 200:
+            amenities = [el["tags"]["amenity"] for el in r.json().get("elements", []) if "tags" in el and "amenity" in el["tags"]]
+            return ", ".join(sorted(set(amenities))) if amenities else "None"
+        return "Unknown"
+    except Exception as e:
+        return f"Error: {e}"
+
+# --- Coordinate Conversion ---
 @st.cache_resource
 def get_transformer():
     return Transformer.from_crs("epsg:4326", "epsg:27700")
 
-def convert_to_british_grid(lat: float, lon: float):
+def convert_to_british_grid(lat, lon):
     try:
         transformer = get_transformer()
         easting, northing = transformer.transform(lat, lon)
@@ -83,166 +134,141 @@ def convert_to_british_grid(lat: float, lon: float):
     except:
         return None, None
 
-# --- CALCULATOR ---
+# --- Power Calculation ---
 def calculate_kva(fast, rapid, ultra, fast_kw=22, rapid_kw=60, ultra_kw=150):
-    total_kw = fast * fast_kw + rapid * rapid_kw + ultra * ultra_kw
-    return round(total_kw / 0.9, 2)
+    return round((fast * fast_kw + rapid * rapid_kw + ultra * ultra_kw) / 0.9, 2)
 
+# =============================
+#         PROCESS SITE
+# =============================
 def process_site(lat, lon, fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw, debug=False):
-    """Process a single site and return all data"""
     easting, northing = convert_to_british_grid(lat, lon)
     postcode, ward, district = get_postcode_info(lat, lon)
     street = get_street_name(lat, lon, debug)
     kva = calculate_kva(fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw)
+
+    traffic = get_tomtom_traffic(lat, lon, TOMTOM_API_KEY) if TOMTOM_API_KEY else {"speed": None, "freeFlow": None, "congestion": "N/A"}
+    road_width = get_osm_road_width(lat, lon)
+    amenities = get_osm_amenities(lat, lon)
+
     return {
-        "latitude": lat, "longitude": lon, "easting": easting, "northing": northing,
+        "latitude": lat, "longitude": lon,
+        "easting": easting, "northing": northing,
         "postcode": postcode, "ward": ward, "district": district, "street": street,
         "fast_chargers": fast, "rapid_chargers": rapid, "ultra_chargers": ultra,
-        "required_kva": kva
+        "required_kva": kva,
+        "traffic_speed": traffic["speed"], "traffic_freeflow": traffic["freeFlow"], "traffic_congestion": traffic["congestion"],
+        "road_width": road_width, "amenities": amenities
     }
 
-# --- MAP HELPERS ---
+# =============================
+#           MAPS
+# =============================
 def add_google_traffic_layer(m):
     folium.TileLayer(
         tiles=f"https://mt1.google.com/vt/lyrs=h,traffic&x={{x}}&y={{y}}&z={{z}}&key={GOOGLE_API_KEY}",
         attr="Google Traffic", name="Traffic"
     ).add_to(m)
 
-def add_osm_layer(m):
-    folium.TileLayer(
-        tiles="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-        attr="OpenStreetMap", name="OSM"
-    ).add_to(m)
-
-def create_map(center, zoom=14, traffic=False, osm=False):
-    m = folium.Map(
-        location=center,
-        zoom_start=zoom,
-        tiles=f"https://mt1.google.com/vt/lyrs=m&x={{x}}&y={{y}}&z={{z}}&key={GOOGLE_API_KEY}",
-        attr="Google Maps"
-    )
-    if traffic:
-        add_google_traffic_layer(m)
-    if osm:
-        add_osm_layer(m)
+def create_single_map(site, show_traffic=False):
+    m = folium.Map(location=[site["latitude"], site["longitude"]], zoom_start=15,
+                   tiles=f"https://mt1.google.com/vt/lyrs=m&x={{x}}&y={{y}}&z={{z}}&key={GOOGLE_API_KEY}", attr="Google Maps")
+    popup = f"""
+    {site['street']}<br>{site['postcode']}<br>
+    Power: {site['required_kva']} kVA<br>
+    Traffic: {site['traffic_congestion']} ({site['traffic_speed']}/{site['traffic_freeflow']} mph)<br>
+    Road Width: {site['road_width']}<br>
+    Amenities: {site['amenities']}
+    """
+    folium.Marker([site["latitude"], site["longitude"]], popup=popup, tooltip="EV Site").add_to(m)
+    if show_traffic: add_google_traffic_layer(m)
     folium.LayerControl().add_to(m)
     return m
 
-def create_single_map(site, traffic=False, osm=False):
-    m = create_map([site["latitude"], site["longitude"]], zoom=15, traffic=traffic, osm=osm)
-    popup = f"{site['street']}<br>{site['postcode']}<br>Power: {site['required_kva']} kVA"
-    folium.Marker([site["latitude"], site["longitude"]], popup=popup, tooltip="EV Site").add_to(m)
-    return m
-
-def create_batch_map(sites, traffic=False, osm=False):
+def create_batch_map(sites, show_traffic=False):
     if not sites: return None
     center_lat = sum(s["latitude"] for s in sites) / len(sites)
     center_lon = sum(s["longitude"] for s in sites) / len(sites)
-    m = create_map([center_lat, center_lon], zoom=6, traffic=traffic, osm=osm)
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=6,
+                   tiles=f"https://mt1.google.com/vt/lyrs=m&x={{x}}&y={{y}}&z={{z}}&key={GOOGLE_API_KEY}", attr="Google Maps")
     for i, site in enumerate(sites):
-        popup = f"Site {i+1}: {site['street']}<br>Power: {site['required_kva']} kVA"
+        popup = f"""
+        Site {i+1}: {site['street']}<br>
+        Power: {site['required_kva']} kVA<br>
+        Traffic: {site['traffic_congestion']}<br>
+        Road Width: {site['road_width']}<br>
+        Amenities: {site['amenities']}
+        """
         folium.Marker([site["latitude"], site["longitude"]], popup=popup, tooltip=f"Site {i+1}").add_to(m)
+    if show_traffic: add_google_traffic_layer(m)
+    folium.LayerControl().add_to(m)
     return m
 
-# --- STREAMLIT APP ---
+# =============================
+#           STREAMLIT
+# =============================
 st.set_page_config(page_title="EV Charger Site Generator", page_icon="🔋", layout="wide")
 st.title("🔋 EV Charger Site Generator")
 
-if not GOOGLE_API_KEY or GOOGLE_API_KEY == "your_api_key_here":
-    st.error("⚠️ Google API key not configured.")
-    st.stop()
-
+# Sidebar settings
 with st.sidebar:
     st.header("⚙️ Settings")
     fast_kw = st.number_input("Fast Charger Power (kW)", value=22)
     rapid_kw = st.number_input("Rapid Charger Power (kW)", value=60)
     ultra_kw = st.number_input("Ultra Charger Power (kW)", value=150)
     show_traffic = st.checkbox("Show Google Traffic Layer", value=False)
-    show_osm = st.checkbox("Add OpenStreetMap Layer", value=False)
-    debug_mode = st.checkbox("Enable Debug Mode", value=False)
 
-# --- SINGLE SITE TAB ---
+# Tabs
 tab1, tab2 = st.tabs(["📍 Single Site", "📁 Batch Processing"])
 
+# --- SINGLE SITE TAB ---
 with tab1:
     st.subheader("Analyze Single Site")
-    with st.form("single_site_form"):
-        col1, col2 = st.columns(2)
-        with col1:
-            lat = st.text_input("Latitude (e.g. 51.5074)")
-            fast = st.number_input("Fast Chargers", min_value=0, value=0)
-            ultra = st.number_input("Ultra Chargers", min_value=0, value=0)
-        with col2:
-            lon = st.text_input("Longitude (e.g. -0.1278)")
-            rapid = st.number_input("Rapid Chargers", min_value=0, value=0)
-        submitted = st.form_submit_button("🔍 Analyze Site")
+    lat = st.text_input("Latitude", "51.5074")
+    lon = st.text_input("Longitude", "-0.1278")
+    fast = st.number_input("Fast Chargers", min_value=0, value=0)
+    rapid = st.number_input("Rapid Chargers", min_value=0, value=0)
+    ultra = st.number_input("Ultra Chargers", min_value=0, value=0)
 
-    if submitted:
+    if st.button("🔍 Analyze Site"):
         try:
-            lat, lon = float(lat), float(lon)
-            site = process_site(lat, lon, fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw, debug_mode)
+            site = process_site(float(lat), float(lon), fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw)
             st.session_state["single_site"] = site
-        except ValueError:
-            st.error("❌ Invalid coordinates")
+        except Exception as e:
+            st.error(f"Error: {e}")
 
     if "single_site" in st.session_state:
         site = st.session_state["single_site"]
-        st.success("✅ Site processed successfully!")
-        col1, col2, col3 = st.columns(3)
-        with col1: st.metric("Latitude", f"{site['latitude']:.6f}")
-        with col2: st.metric("Longitude", f"{site['longitude']:.6f}")
-        with col3: st.metric("Required kVA", site["required_kva"])
-        st.write(f"**Street:** {site['street']}, **Postcode:** {site['postcode']}, **Ward:** {site['ward']}")
-        st_folium(create_single_map(site, show_traffic, show_osm), width=700, height=400)
-        st.download_button("📥 Download CSV", pd.DataFrame([site]).to_csv(index=False), "ev_site.csv")
+        st.metric("Required kVA", site["required_kva"])
+        st.metric("Traffic Congestion", site["traffic_congestion"])
+        st.metric("Road Width", site["road_width"])
+        st.write(site)
+        st.subheader("🗺️ Map")
+        st_folium(create_single_map(site, show_traffic), width=700, height=500)
 
 # --- BATCH TAB ---
 with tab2:
-    st.subheader("Process Multiple Sites")
-    template = pd.DataFrame({
-        "latitude": [51.5074, 53.4808, 55.9533],
-        "longitude": [-0.1278, -2.2426, -3.1883],
-        "fast": [2, 3, 1], "rapid": [1, 2, 2], "ultra": [1, 0, 1]
-    })
-    st.download_button("📥 Download Template", template.to_csv(index=False), "template.csv")
-    uploaded = st.file_uploader("Upload CSV", type="csv")
-
+    st.subheader("Batch Processing")
+    uploaded = st.file_uploader("Upload CSV with columns: latitude, longitude, fast, rapid, ultra", type="csv")
     if uploaded:
-        df_in = pd.read_csv(uploaded)
-        required = {"latitude", "longitude", "fast", "rapid", "ultra"}
-        if not required.issubset(df_in.columns):
-            st.error("❌ Missing columns")
-        else:
-            if st.button("🚀 Process All Sites"):
-                results, errors = [], []
-                delay = 0.2
-                for i, row in df_in.iterrows():
-                    try:
-                        site = process_site(
-                            float(row["latitude"]), float(row["longitude"]),
-                            int(row.get("fast", 0)), int(row.get("rapid", 0)), int(row.get("ultra", 0)),
-                            fast_kw, rapid_kw, ultra_kw
-                        )
-                        results.append(site)
-                        if site["street"] in ["Quota exceeded", "API denied", "Timeout"]:
-                            errors.append({"Site": i+1, "Error": site["street"]})
-                            delay = min(delay*2, 5.0)  # adaptive backoff
-                    except Exception as e:
-                        errors.append({"Site": i+1, "Error": str(e)})
-                        results.append({})
-                        delay = min(delay*2, 5.0)
-                    time.sleep(delay + random.uniform(0, 0.2))  # jitter
-
-                st.session_state["batch_results"] = results
-                if errors:
-                    st.warning("⚠️ Some sites had issues")
-                    st.dataframe(pd.DataFrame(errors))
-
-    if "batch_results" in st.session_state:
-        df_out = pd.DataFrame(st.session_state["batch_results"])
-        st.metric("Total Sites", len(df_out))
-        st.metric("Total Chargers", df_out[["fast_chargers","rapid_chargers","ultra_chargers"]].sum().sum())
-        st.metric("Total Power (kVA)", f"{df_out['required_kva'].sum():,.0f}")
-        st.dataframe(df_out)
-        st_folium(create_batch_map(st.session_state["batch_results"], show_traffic, show_osm), width=700, height=500)
-        st.download_button("📥 Download Results", df_out.to_csv(index=False), "batch_results.csv")
+        df = pd.read_csv(uploaded)
+        if st.button("🚀 Process All"):
+            results, errors = [], []
+            for i, row in df.iterrows():
+                try:
+                    site = process_site(float(row["latitude"]), float(row["longitude"]),
+                                        int(row.get("fast", 0)), int(row.get("rapid", 0)), int(row.get("ultra", 0)),
+                                        fast_kw, rapid_kw, ultra_kw)
+                    results.append(site)
+                except Exception as e:
+                    errors.append(f"Row {i+1}: {e}")
+                    continue
+                time.sleep(0.3)  # adaptive: reduce if errors are low
+            if errors:
+                st.warning("Some errors occurred:")
+                st.dataframe(pd.DataFrame(errors, columns=["Error"]))
+            if results:
+                df_out = pd.DataFrame(results)
+                st.dataframe(df_out)
+                st_folium(create_batch_map(results, show_traffic), width=700, height=500)
+                st.download_button("📥 Download Results", df_out.to_csv(index=False), "batch_results.csv", "text/csv")
