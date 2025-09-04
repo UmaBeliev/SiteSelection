@@ -178,7 +178,13 @@ def create_single_map(site, show_traffic=False):
     Road Width: {site['road_width']}<br>
     Amenities: {site['amenities']}
     """
-    folium.Marker([site["latitude"], site["longitude"]], popup=popup, tooltip="EV Site").add_to(m)
+    
+    folium.Marker(
+        [site["latitude"], site["longitude"]],
+        popup=popup,
+        tooltip="EV Site",
+        icon=folium.Icon(color="pink")  # <-- pink marker
+    ).add_to(m)
     if show_traffic: add_google_traffic_layer(m)
     folium.LayerControl().add_to(m)
     return m
@@ -197,7 +203,13 @@ def create_batch_map(sites, show_traffic=False):
         Road Width: {site['road_width']}<br>
         Amenities: {site['amenities']}
         """
-        folium.Marker([site["latitude"], site["longitude"]], popup=popup, tooltip=f"Site {i+1}").add_to(m)
+        
+        folium.Marker(
+        [site["latitude"], site["longitude"]],
+        popup=popup,
+        tooltip="EV Site",
+        icon=folium.Icon(color="pink")  # <-- pink marker
+    ).add_to(m)
     if show_traffic: add_google_traffic_layer(m)
     folium.LayerControl().add_to(m)
     return m
