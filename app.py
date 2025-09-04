@@ -279,7 +279,7 @@ with tab2:
                         site = process_site(
                             float(row["latitude"]), float(row["longitude"]),
                             int(row.get("fast", 0)), int(row.get("rapid", 0)), int(row.get("ultra", 0)),
-                            fast_kw, rapid_kw, ultra_kw, show_debug=False
+                            fast_kw, rapid_kw, ultra_kw, False
                         )
                         results.append(site)
                         
