@@ -98,6 +98,11 @@ def create_batch_map(sites):
 st.set_page_config(page_title="EV Charger Site Generator", page_icon="🔋", layout="wide")
 st.title("🔋 EV Charger Site Generator")
 
+# Clear any old session state with different structure
+if "batch_results" in st.session_state:
+    if st.session_state["batch_results"] and not all(isinstance(item, dict) for item in st.session_state["batch_results"]):
+        del st.session_state["batch_results"]
+
 # Sidebar
 with st.sidebar:
     st.header("⚙️ Settings")
@@ -133,6 +138,26 @@ with tab1:
     if "single_site" in st.session_state:
         site = st.session_state["single_site"]
         st.success("✅ Site processed successfully!")
+        
+        # Debug info if enabled
+        if debug_mode:
+            with st.expander("🔧 API Debug Info"):
+                st.write("**Testing street name API directly:**")
+                try:
+                    test_response = requests.get(
+                        "https://nominatim.openstreetmap.org/reverse",
+                        params={"format": "json", "lat": site['latitude'], "lon": site['longitude'], "zoom": 18, "addressdetails": 1},
+                        headers={"User-Agent": "EV-Charger-Site-Generator/1.0"},
+                        timeout=10
+                    )
+                    st.write(f"Status Code: {test_response.status_code}")
+                    if test_response.status_code == 200:
+                        test_data = test_response.json()
+                        st.json(test_data)
+                    else:
+                        st.write(f"Response: {test_response.text[:200]}")
+                except Exception as e:
+                    st.write(f"API Test Error: {str(e)}")
         
         # Site details
         col1, col2 = st.columns(2)
