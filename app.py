@@ -266,34 +266,54 @@ with tab2:
                 progress = st.progress(0)
                 status = st.empty()
                 results = []
+                errors = []
+                
+                # Add delay selector for batch processing
+                st.info("💡 Processing with 1-second delays between requests to avoid API limits")
                 
                 for i, row in df_in.iterrows():
-                    status.text(f"Processing site {i+1} of {len(df_in)}...")
+                    status.text(f"Processing site {i+1} of {len(df_in)} - {row.get('latitude', 'N/A')}, {row.get('longitude', 'N/A')}")
                     progress.progress((i + 1) / len(df_in))
                     
                     try:
                         site = process_site(
                             float(row["latitude"]), float(row["longitude"]),
                             int(row.get("fast", 0)), int(row.get("rapid", 0)), int(row.get("ultra", 0)),
-                            fast_kw, rapid_kw, ultra_kw
+                            fast_kw, rapid_kw, ultra_kw, show_debug=False
                         )
                         results.append(site)
+                        
+                        # Show progress for street name lookup
+                        if site['street'] in ['Quota exceeded', 'API denied', 'Timeout']:
+                            errors.append(f"Site {i+1}: {site['street']}")
+                            
                     except Exception as e:
-                        st.warning(f"Error processing site {i+1}: {str(e)}")
+                        error_msg = str(e)
+                        errors.append(f"Site {i+1}: {error_msg}")
+                        st.warning(f"Error processing site {i+1}: {error_msg}")
                         # Add placeholder data for failed sites
                         results.append({
                             "latitude": row["latitude"], "longitude": row["longitude"], 
                             "easting": None, "northing": None,
                             "postcode": "Error", "ward": "Error", "district": "Error", 
-                            "street": f"Error: {str(e)}", "fast_chargers": row.get("fast", 0), 
+                            "street": f"Error: {error_msg[:30]}", "fast_chargers": row.get("fast", 0), 
                             "rapid_chargers": row.get("rapid", 0), "ultra_chargers": row.get("ultra", 0),
                             "required_kva": 0
                         })
                     
-                    # Small delay to avoid overwhelming APIs
-                    time.sleep(0.5)
+                    # Longer delay for batch processing to avoid rate limits
+                    time.sleep(1.0)
                 
                 status.text("Processing complete!")
+                
+                # Show error summary
+                if errors:
+                    st.warning(f"⚠️ {len(errors)} sites had issues:")
+                    for error in errors[:5]:  # Show first 5 errors
+                        st.text(f"• {error}")
+                    if len(errors) > 5:
+                        st.text(f"... and {len(errors) - 5} more errors")
+                
                 st.session_state["batch_results"] = results
             
             # Display batch results
