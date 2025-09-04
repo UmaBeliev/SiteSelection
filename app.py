@@ -6,15 +6,16 @@ from streamlit_folium import st_folium
 from pyproj import Transformer
 import time
 
-# --- API KEYS ---
+# ==============================
+#           API KEYS
+# ==============================
 GOOGLE_API_KEY = st.secrets["google_api_key"]
 TOMTOM_API_KEY = st.secrets.get("tomtom_api_key", "")
 
-# =============================
+# ==============================
 #           UTILITIES
-# =============================
+# ==============================
 
-# --- Postcode Info ---
 @st.cache_data
 def get_postcode_info(lat: float, lon: float):
     try:
@@ -27,7 +28,6 @@ def get_postcode_info(lat: float, lon: float):
         st.warning(f"Postcode API error: {str(e)}")
     return "N/A", "N/A", "N/A"
 
-# --- Google Maps Reverse Geocoding ---
 @st.cache_data
 def get_street_name(lat: float, lon: float, debug=False) -> str:
     try:
@@ -35,7 +35,6 @@ def get_street_name(lat: float, lon: float, debug=False) -> str:
         params = {"latlng": f"{lat},{lon}", "key": GOOGLE_API_KEY, "result_type": "street_address|route|premise"}
         response = requests.get(url, params=params, timeout=10)
         data = response.json()
-
         if debug:
             st.write(f"Google API Response: {data}")
 
@@ -64,7 +63,6 @@ def get_street_name(lat: float, lon: float, debug=False) -> str:
     except Exception as e:
         return f"Error: {e}"
 
-# --- TomTom Traffic ---
 def get_tomtom_traffic(lat, lon, api_key):
     try:
         url = "https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json"
@@ -83,7 +81,6 @@ def get_tomtom_traffic(lat, lon, api_key):
     except Exception as e:
         return {"speed": None, "freeFlow": None, "congestion": f"Error: {e}"}
 
-# --- OSM Road Width ---
 def get_osm_road_width(lat, lon, radius=30):
     try:
         query = f"""
@@ -104,7 +101,6 @@ def get_osm_road_width(lat, lon, radius=30):
     except Exception as e:
         return f"Error: {e}"
 
-# --- OSM Amenities ---
 def get_osm_amenities(lat, lon, radius=100):
     try:
         query = f"""
@@ -121,7 +117,6 @@ def get_osm_amenities(lat, lon, radius=100):
     except Exception as e:
         return f"Error: {e}"
 
-# --- Coordinate Conversion ---
 @st.cache_resource
 def get_transformer():
     return Transformer.from_crs("epsg:4326", "epsg:27700")
@@ -134,23 +129,17 @@ def convert_to_british_grid(lat, lon):
     except:
         return None, None
 
-# --- Power Calculation ---
 def calculate_kva(fast, rapid, ultra, fast_kw=22, rapid_kw=60, ultra_kw=150):
     return round((fast * fast_kw + rapid * rapid_kw + ultra * ultra_kw) / 0.9, 2)
 
-# =============================
-#         PROCESS SITE
-# =============================
 def process_site(lat, lon, fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw, debug=False):
     easting, northing = convert_to_british_grid(lat, lon)
     postcode, ward, district = get_postcode_info(lat, lon)
     street = get_street_name(lat, lon, debug)
     kva = calculate_kva(fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw)
-
     traffic = get_tomtom_traffic(lat, lon, TOMTOM_API_KEY) if TOMTOM_API_KEY else {"speed": None, "freeFlow": None, "congestion": "N/A"}
     road_width = get_osm_road_width(lat, lon)
     amenities = get_osm_amenities(lat, lon)
-
     return {
         "latitude": lat, "longitude": lon,
         "easting": easting, "northing": northing,
@@ -161,9 +150,9 @@ def process_site(lat, lon, fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw, debu
         "road_width": road_width, "amenities": amenities
     }
 
-# =============================
+# ==============================
 #           MAPS
-# =============================
+# ==============================
 def add_google_traffic_layer(m):
     folium.TileLayer(
         tiles=f"https://mt1.google.com/vt/lyrs=h,traffic&x={{x}}&y={{y}}&z={{z}}&key={GOOGLE_API_KEY}",
@@ -204,13 +193,13 @@ def create_batch_map(sites, show_traffic=False):
     folium.LayerControl().add_to(m)
     return m
 
-# =============================
-#           STREAMLIT
-# =============================
+# ==============================
+#           STREAMLIT APP
+# ==============================
 st.set_page_config(page_title="EV Charger Site Generator", page_icon="🔋", layout="wide")
 st.title("🔋 EV Charger Site Generator")
 
-# Sidebar settings
+# Sidebar
 with st.sidebar:
     st.header("⚙️ Settings")
     fast_kw = st.number_input("Fast Charger Power (kW)", value=22)
@@ -221,7 +210,7 @@ with st.sidebar:
 # Tabs
 tab1, tab2 = st.tabs(["📍 Single Site", "📁 Batch Processing"])
 
-# --- SINGLE SITE TAB ---
+# --- SINGLE SITE ---
 with tab1:
     st.subheader("Analyze Single Site")
     lat = st.text_input("Latitude", "51.5074")
@@ -246,29 +235,66 @@ with tab1:
         st.subheader("🗺️ Map")
         st_folium(create_single_map(site, show_traffic), width=700, height=500)
 
-# --- BATCH TAB ---
+# --- BATCH PROCESSING ---
 with tab2:
     st.subheader("Batch Processing")
     uploaded = st.file_uploader("Upload CSV with columns: latitude, longitude, fast, rapid, ultra", type="csv")
+    
     if uploaded:
         df = pd.read_csv(uploaded)
-        if st.button("🚀 Process All"):
-            results, errors = [], []
-            for i, row in df.iterrows():
-                try:
-                    site = process_site(float(row["latitude"]), float(row["longitude"]),
-                                        int(row.get("fast", 0)), int(row.get("rapid", 0)), int(row.get("ultra", 0)),
-                                        fast_kw, rapid_kw, ultra_kw)
-                    results.append(site)
-                except Exception as e:
-                    errors.append(f"Row {i+1}: {e}")
-                    continue
-                time.sleep(0.3)  # adaptive: reduce if errors are low
-            if errors:
-                st.warning("Some errors occurred:")
-                st.dataframe(pd.DataFrame(errors, columns=["Error"]))
-            if results:
-                df_out = pd.DataFrame(results)
-                st.dataframe(df_out)
-                st_folium(create_batch_map(results, show_traffic), width=700, height=500)
-                st.download_button("📥 Download Results", df_out.to_csv(index=False), "batch_results.csv", "text/csv")
+        required_cols = {"latitude", "longitude", "fast", "rapid", "ultra"}
+        if not required_cols.issubset(df.columns):
+            missing = required_cols - set(df.columns)
+            st.error(f"Missing columns: {', '.join(missing)}")
+        else:
+            if st.button("🚀 Process All Sites"):
+                progress = st.progress(0)
+                results, errors = [], []
+                
+                for i, row in df.iterrows():
+                    try:
+                        site = process_site(
+                            float(row["latitude"]), float(row["longitude"]),
+                            int(row.get("fast",0)), int(row.get("rapid",0)), int(row.get("ultra",0)),
+                            fast_kw, rapid_kw, ultra_kw
+                        )
+                        results.append(site)
+                    except Exception as e:
+                        errors.append(f"Row {i+1}: {e}")
+                        results.append({
+                            "latitude": row.get("latitude"), "longitude": row.get("longitude"),
+                            "easting": None, "northing": None,
+                            "postcode": "Error", "ward": "Error", "district": "Error",
+                            "street": f"Error: {str(e)[:30]}",
+                            "fast_chargers": row.get("fast", 0),
+                            "rapid_chargers": row.get("rapid", 0),
+                            "ultra_chargers": row.get("ultra", 0),
+                            "required_kva": 0,
+                            "traffic_speed": None, "traffic_freeflow": None, "traffic_congestion": "Error",
+                            "road_width": None, "amenities": None
+                        })
+                    
+                    # Adaptive sleep
+                    if site.get("street") in ["Quota exceeded", "API denied"]:
+                        time.sleep(1.0)
+                    else:
+                        time.sleep(0.1)
+                    
+                    progress.progress((i+1)/len(df))
+                
+                st.session_state["batch_results"] = results
+                
+                if errors:
+                    st.warning(f"{len(errors)} errors occurred:")
+                    st.dataframe(pd.DataFrame(errors, columns=["Error"]))
+                
+                st.success("Batch processing complete!")
+    
+    if "batch_results" in st.session_state:
+        results = st.session_state["batch_results"]
+        df_out = pd.DataFrame(results)
+        st.subheader("📋 Batch Results")
+        st.dataframe(df_out)
+        st.subheader("🗺️ Map")
+        st_folium(create_batch_map(results, show_traffic=show_traffic), width=700, height=500)
+        st.download_button("📥 Download CSV", df_out.to_csv(index=False), "batch_results.csv", "text/csv")
