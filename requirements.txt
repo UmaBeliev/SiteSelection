@@ -4,3 +4,4 @@ requests
 pyproj
 folium
 streamlit-folium
+matplotlib
