@@ -7,7 +7,7 @@ import requests
 # ==============================
 #           API KEYS
 # ==============================
-GOOGLE_API_KEY = st.secrets["google_api_key"]  # Ensure you have Roads API enabled
+GOOGLE_API_KEY = st.secrets.get("google_api_key", "")  # Ensure Roads API is enabled
 
 # --- Power calculator ---
 def calculate_kva(fast, rapid, ultra, fast_kw=22, rapid_kw=60, ultra_kw=150):
@@ -16,25 +16,17 @@ def calculate_kva(fast, rapid, ultra, fast_kw=22, rapid_kw=60, ultra_kw=150):
 
 # --- Snap to nearest road using Google Roads API ---
 def snap_to_road(lat, lon):
-    url = f"https://roads.googleapis.com/v1/snapToRoads?path={lat},{lon}&key={GOOGLE_API_KEY}"
-    response = requests.get(url)
-    if response.status_code == 200:
+    try:
+        url = f"https://roads.googleapis.com/v1/snapToRoads?path={lat},{lon}&key={GOOGLE_API_KEY}"
+        response = requests.get(url, timeout=5)
+        response.raise_for_status()
         data = response.json()
         if "snappedPoints" in data:
             snapped = data["snappedPoints"][0]["location"]
             return snapped["latitude"], snapped["longitude"]
+    except Exception as e:
+        st.warning(f"⚠️ Could not snap to road: {e}")
     return lat, lon
-
-# --- Get nearest road name using Google Roads API (optional) ---
-def get_nearest_road_name(lat, lon):
-    # Use Roads API "nearestRoads" endpoint
-    url = f"https://roads.googleapis.com/v1/nearestRoads?points={lat},{lon}&key={GOOGLE_API_KEY}"
-    response = requests.get(url)
-    if response.status_code == 200:
-        data = response.json()
-        if "snappedPoints" in data:
-            return data["snappedPoints"][0]["originalIndex"]
-    return "Unknown"
 
 # --- Main App ---
 st.set_page_config(page_title="EV Site App", page_icon="🔋", layout="wide")
@@ -49,20 +41,20 @@ with st.form("site_form"):
     fast = st.number_input("Fast Chargers", min_value=0, value=0)
     rapid = st.number_input("Rapid Chargers", min_value=0, value=0)
     ultra = st.number_input("Ultra Chargers", min_value=0, value=0)
-
     submit = st.form_submit_button("🔍 Analyze Site")
 
 if submit:
     if lat == 0.0 and lon == 0.0:
         st.error("❌ Please enter valid coordinates")
     else:
-        # Snap to road
-        snapped_lat, snapped_lon = snap_to_road(lat, lon)
+        # Snap to road with spinner
+        with st.spinner("⌛ Snapping to nearest road..."):
+            snapped_lat, snapped_lon = snap_to_road(lat, lon)
 
         # Calculate power
         kva = calculate_kva(fast, rapid, ultra)
 
-        # Show details
+        # Show site details
         st.success("✅ Site processed successfully!")
         st.write(f"**Original Latitude:** {lat:.6f}")
         st.write(f"**Original Longitude:** {lon:.6f}")
