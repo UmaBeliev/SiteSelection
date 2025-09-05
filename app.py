@@ -872,7 +872,7 @@ with tab1:
         # Detailed information
         st.subheader("📋 Detailed Site Information")
         
-        detail_tabs = st.tabs(["🏠 Location", "🔌 Power", "🛣️ Road Info", "🚦 Traffic", "🏪 Amenities", "⚡ EV Competitors"])
+        detail_tabs = st.tabs(["🏠 Location", "🔌 Power", "🛣️ Road Info", "🚦 Traffic", "🏪 Amenities", "⚡ EV Competitors", "🗺️ Site Map"])
         
         with detail_tabs[0]:
             st.write(f"**Address:** {site.get('formatted_address', 'N/A')}")
@@ -905,23 +905,25 @@ with tab1:
             st.write(f"**Nearby Amenities:** {site.get('amenities', 'N/A')}")
         
         with detail_tabs[5]:
+            # EV Competitors tab with dedicated map and analysis
             st.write(f"**Number of Competitor EV Stations:** {site.get('competitor_ev_count', 0)}")
             st.write(f"**Competitor Names:** {site.get('competitor_ev_names', 'None')}")
             
             # Display detailed EV station information
             ev_stations = site.get('ev_stations_details', [])
             if ev_stations:
-                st.subheader("🔍 Detailed Competitor Information")
-                for i, station in enumerate(ev_stations):
-                    with st.expander(f"⚡ {station.get('name', f'EV Station {i+1}')}"):
-                        col_a, col_b = st.columns(2)
-                        with col_a:
+                # Competitor analysis section
+                col_comp1, col_comp2 = st.columns(2)
+                
+                with col_comp1:
+                    st.subheader("🔍 Detailed Competitor Information")
+                    for i, station in enumerate(ev_stations):
+                        with st.expander(f"⚡ {station.get('name', f'EV Station {i+1}')}"):
                             st.write(f"**Rating:** {station.get('rating', 'N/A')}")
                             st.write(f"**Address:** {station.get('address', 'N/A')}")
                             st.write(f"**Phone:** {station.get('phone', 'N/A')}")
-                            st.write(f"**Place ID:** {station.get('place_id', 'N/A')}")
                             st.write(f"**Coordinates:** {station.get('latitude', 'N/A')}, {station.get('longitude', 'N/A')}")
-                        with col_b:
+                            
                             if station.get('photo_url'):
                                 try:
                                     st.image(station['photo_url'], caption=station.get('name', 'EV Station'), width=200)
@@ -929,49 +931,98 @@ with tab1:
                                     st.write("📷 Photo unavailable")
                             else:
                                 st.write("📷 No photo available")
+                
+                with col_comp2:
+                    # Market Share Pie Chart
+                    st.subheader("📊 Competitor Market Share")
+                    
+                    # Extract brand/company names from station names
+                    competitor_brands = {}
+                    for station in ev_stations:
+                        name = station.get('name', 'Unknown')
+                        brand = extract_brand_name(name)
+                        competitor_brands[brand] = competitor_brands.get(brand, 0) + 1
+                    
+                    if competitor_brands:
+                        # Create DataFrame for pie chart
+                        df_pie = pd.DataFrame(list(competitor_brands.items()), columns=['Brand', 'Count'])
+                        
+                        # Create pie chart using plotly (if available) or matplotlib alternative
+                        import matplotlib.pyplot as plt
+                        
+                        fig, ax = plt.subplots(figsize=(8, 6))
+                        colors = plt.cm.Set3(range(len(df_pie)))
+                        wedges, texts, autotexts = ax.pie(df_pie['Count'], labels=df_pie['Brand'], 
+                                                         autopct='%1.1f%%', colors=colors, startangle=90)
+                        ax.set_title('Competitor Market Share')
+                        
+                        # Make percentage text more readable
+                        for autotext in autotexts:
+                            autotext.set_color('black')
+                            autotext.set_fontweight('bold')
+                        
+                        st.pyplot(fig)
+                        
+                        # Show competitor list
+                        st.write("**Competitor Breakdown:**")
+                        total_stations = sum(competitor_brands.values())
+                        for brand, count in competitor_brands.items():
+                            percentage = (count / total_stations) * 100
+                            st.write(f"• **{brand}**: {count} stations ({percentage:.1f}%)")
+                
+                # Dedicated EV Competitors Map
+                st.subheader("🗺️ EV Competitors Map")
+                st.markdown("*Pink marker: Your proposed site | Red markers: Competitor EV stations*")
+                
+                # Create a focused map for competitors
+                comp_map = folium.Map(
+                    location=[site["latitude"], site["longitude"]], 
+                    zoom_start=14,
+                    tiles=f"https://mt1.google.com/vt/lyrs=m&x={{x}}&y={{y}}&z={{z}}&key={GOOGLE_API_KEY}", 
+                    attr="Google Maps"
+                )
+                
+                # Add your site
+                folium.Marker(
+                    [site["latitude"], site["longitude"]], 
+                    popup=f"🔋 Your Proposed EV Site<br>Power: {site.get('required_kva', 'N/A')} kVA",
+                    tooltip="🔋 Your EV Charging Site",
+                    icon=folium.Icon(color="pink", icon="bolt", prefix="fa")
+                ).add_to(comp_map)
+                
+                # Add competitor markers
+                for station in ev_stations:
+                    station_lat = station.get('latitude')
+                    station_lng = station.get('longitude')
+                    
+                    if station_lat and station_lng:
+                        comp_popup = f"""
+                        <b>⚡ {station.get('name', 'Unknown EV Station')}</b><br>
+                        <b>Rating:</b> {station.get('rating', 'N/A')}<br>
+                        <b>Address:</b> {station.get('address', 'N/A')}<br>
+                        <b>Phone:</b> {station.get('phone', 'N/A')}
+                        """
+                        
+                        folium.Marker(
+                            [station_lat, station_lng],
+                            popup=folium.Popup(comp_popup, max_width=300),
+                            tooltip=f"⚡ {station.get('name', 'Competitor')}",
+                            icon=folium.Icon(color="red", icon="flash", prefix="fa")
+                        ).add_to(comp_map)
+                
+                if show_traffic:
+                    add_google_traffic_layer(comp_map)
+                
+                st_folium(comp_map, width=700, height=400)
+                
             else:
                 st.info("No competitor EV charging stations found nearby.")
         
-        # EV Competitor Market Share Analysis
-        ev_stations = site.get('ev_stations_details', [])
-        if ev_stations:
-            st.subheader("📊 Competitor Market Share Analysis")
-            
-            # Extract brand/company names from station names
-            competitor_brands = {}
-            for station in ev_stations:
-                name = station.get('name', 'Unknown')
-                # Extract brand name (simple heuristic)
-                brand = extract_brand_name(name)
-                competitor_brands[brand] = competitor_brands.get(brand, 0) + 1
-            
-            # Create bar chart
-            if competitor_brands:
-                brands = list(competitor_brands.keys())
-                counts = list(competitor_brands.values())
-                
-                # Create DataFrame for chart
-                df_chart = pd.DataFrame({
-                    'Brand': brands,
-                    'Number of Stations': counts
-                })
-                
-                # Sort by count
-                df_chart = df_chart.sort_values('Number of Stations', ascending=False)
-                
-                st.bar_chart(df_chart.set_index('Brand'), use_container_width=True)
-                
-                # Show top competitors
-                st.write("**Top Competitors:**")
-                for i, (brand, count) in enumerate(df_chart.values):
-                    percentage = (count / len(ev_stations)) * 100
-                    st.write(f"{i+1}. **{brand}**: {count} stations ({percentage:.1f}%)")
-        
-        # Map
-        st.subheader("🗺️ Site Map")
-        st.markdown("*Pink markers: Your proposed site | Red markers: Competitor EV stations*")
-        map_obj = create_single_map(site, show_traffic)
-        st_folium(map_obj, width=700, height=500, returned_objects=["last_object_clicked"])
+        with detail_tabs[6]:
+            # Site Map tab
+            st.markdown("*Pink marker: Your proposed site | Red markers: Competitor EV stations*")
+            map_obj = create_single_map(site, show_traffic)
+            st_folium(map_obj, width=700, height=500, returned_objects=["last_object_clicked"])
 
 # --- BATCH PROCESSING ---
 with tab2:
