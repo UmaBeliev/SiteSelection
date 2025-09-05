@@ -11,13 +11,13 @@ import logging
 # API KEYS
 # ==============================
 # It's recommended to use Streamlit's secrets management for API keys
-# GOOGLE_API_KEY = st.secrets["google_api_key"]
-# TOMTOM_API_KEY = st.secrets.get("tomtom_api_key", "")
+GOOGLE_API_KEY = st.secrets["google_api_key"]
+TOMTOM_API_KEY = st.secrets.get("tomtom_api_key", "")
 
 # For local development, you might use environment variables or a .env file
 # In this example, we'll define them here, but this is NOT recommended for production
-GOOGLE_API_KEY = "YOUR_GOOGLE_MAPS_API_KEY"  # Replace with your key
-TOMTOM_API_KEY = "YOUR_TOMTOM_API_KEY"        # Replace with your key
+#GOOGLE_API_KEY = "YOUR_GOOGLE_MAPS_API_KEY"  # Replace with your key
+#TOMTOM_API_KEY = "YOUR_TOMTOM_API_KEY"        # Replace with your key
 
 # ==============================
 # UTILITY FUNCTIONS
