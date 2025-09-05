@@ -1,4 +1,47 @@
-import streamlit as st
+if st.button("🔍 Analyze Site", type="primary"):
+        try:
+            lat_float, lon_float = float(lat), float(lon)
+            if not (-90 <= lat_float <= 90) or not (-180 <= lon_float <= 180):
+                st.error("Invalid coordinates. Latitude must be between -90 and 90, longitude between -180 and 180.")
+            else:
+                site = process_site(lat_float, lon_float, fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw, competitor_radius, amenities_radius)
+                st.session_state["single_site"] = site
+                st.success("✅ Site analysis completed!")
+        except ValueError:
+            st.error("Invalid coordinate format. Please enter numeric values.")
+        except Exception as e:
+            st.error(f"Error analyzing site: {e}")
+
+    if "single_site" in st.session_state:
+        site = st.session_state["single_site"]
+        
+        # Key metrics
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Required kVA", site.get("required_kva", "N/A"))
+        with col2:
+            st.metric("Snapped Road Type", site.get("snapped_road_type", "Unknown"))
+        with col3:
+            st.metric("Traffic Level", site.get("traffic_congestion", "N/A"))
+        with col4:
+            ev_count = site.get("competitor_ev_count", 0)
+            st.metric("Competitor EVs", ev_count)
+        
+        # Show current search settings
+        st.info(f"📡 Search Settings: Competitors within {competitor_radius}m | Amenities within {amenities_radius}m")
+        
+        # Detailed information
+        st.subheader("📋 Detailed Site Information")
+        
+        detail_tabs = st.tabs(["🏠 Location", "🔌 Power", "🛣️ Road Info", "🚦 Traffic", "🏪 Amenities", "⚡ EV Competitors", "🗺️ Site Map"])
+        
+        with detail_tabs[0]:
+            st.write(f"**Address:** {site.get('formatted_address', 'N/A')}")
+            st.write(f"**Postcode:** {site.get('postcode', 'N/A')}")
+            st.write(f"**Ward:** {site.get('ward', 'N/A')}")
+            st.write(f"**District:** {site.get('district', 'N/A')}")
+            st.write(import streamlit as st
 import pandas as pd
 import requests
 import folium
