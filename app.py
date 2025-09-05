@@ -480,68 +480,108 @@ def get_tomtom_traffic(lat, lon):
 def process_site(lat, lon, fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw):
     """Process a single site and gather all information"""
     with st.spinner(f"Processing site at {lat}, {lon}..."):
-        # Basic coordinates
-        easting, northing = convert_to_british_grid(lat, lon)
-        
-        # Postcode information
-        postcode, ward, district = get_postcode_info(lat, lon)
-        
-        # Detailed geocoding
-        geo = get_geocode_details(lat, lon)
-        
-        # Power calculation
-        kva = calculate_kva(fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw)
-        
-        # Traffic information
-        traffic = get_tomtom_traffic(lat, lon)
-        
-        # Regular amenities (excluding EV stations)
-        amenities = get_nearby_amenities(lat, lon)
-        
-        # EV charging stations specifically
-        ev_stations = get_ev_charging_stations(lat, lon)
-        
-        # Process EV station data
-        ev_count = len(ev_stations)
-        ev_names = [station["name"] for station in ev_stations]
-        ev_names_str = "; ".join(ev_names) if ev_names else "None"
-        
-        # Road information using Google Roads API
-        road_info = get_road_info_google_roads(lat, lon)
-        
-        return {
+        # Initialize default values
+        result = {
             "latitude": lat,
             "longitude": lon,
-            "easting": easting,
-            "northing": northing,
-            "postcode": postcode,
-            "ward": ward,
-            "district": district,
-            "street": geo.get("street", "N/A"),
-            "street_number": geo.get("street_number", "N/A"),
-            "neighborhood": geo.get("neighborhood", "N/A"),
-            "city": geo.get("city", "N/A"),
-            "county": geo.get("county", "N/A"),
-            "region": geo.get("region", "N/A"),
-            "country": geo.get("country", "N/A"),
-            "formatted_address": geo.get("formatted_address", "N/A"),
+            "easting": None,
+            "northing": None,
+            "postcode": "N/A",
+            "ward": "N/A",
+            "district": "N/A",
+            "street": "N/A",
+            "street_number": "N/A",
+            "neighborhood": "N/A",
+            "city": "N/A",
+            "county": "N/A",
+            "region": "N/A",
+            "country": "N/A",
+            "formatted_address": "N/A",
             "fast_chargers": fast,
             "rapid_chargers": rapid,
             "ultra_chargers": ultra,
-            "required_kva": kva,
-            "traffic_speed": traffic["speed"],
-            "traffic_freeflow": traffic["freeFlow"],
-            "traffic_congestion": traffic["congestion"],
-            "amenities": amenities,
-            "snapped_road_name": road_info["snapped_road_name"],
-            "snapped_road_type": road_info["snapped_road_type"],
-            "nearest_road_name": road_info["nearest_road_name"],
-            "nearest_road_type": road_info["nearest_road_type"],
-            "place_id": road_info.get("place_id"),
-            "competitor_ev_count": ev_count,
-            "competitor_ev_names": ev_names_str,
-            "ev_stations_details": ev_stations  # Full details for display
+            "required_kva": 0,
+            "traffic_speed": None,
+            "traffic_freeflow": None,
+            "traffic_congestion": "N/A",
+            "amenities": "N/A",
+            "snapped_road_name": "Unknown",
+            "snapped_road_type": "Unknown",
+            "nearest_road_name": "Unknown",
+            "nearest_road_type": "Unknown",
+            "place_id": None,
+            "competitor_ev_count": 0,
+            "competitor_ev_names": "None",
+            "ev_stations_details": []
         }
+        
+        try:
+            # Basic coordinates
+            easting, northing = convert_to_british_grid(lat, lon)
+            result["easting"] = easting
+            result["northing"] = northing
+            
+            # Power calculation
+            kva = calculate_kva(fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw)
+            result["required_kva"] = kva
+            
+            # Postcode information
+            postcode, ward, district = get_postcode_info(lat, lon)
+            result["postcode"] = postcode
+            result["ward"] = ward
+            result["district"] = district
+            
+            # Detailed geocoding
+            geo = get_geocode_details(lat, lon)
+            result.update({
+                "street": geo.get("street", "N/A"),
+                "street_number": geo.get("street_number", "N/A"),
+                "neighborhood": geo.get("neighborhood", "N/A"),
+                "city": geo.get("city", "N/A"),
+                "county": geo.get("county", "N/A"),
+                "region": geo.get("region", "N/A"),
+                "country": geo.get("country", "N/A"),
+                "formatted_address": geo.get("formatted_address", "N/A")
+            })
+            
+            # Traffic information
+            traffic = get_tomtom_traffic(lat, lon)
+            result.update({
+                "traffic_speed": traffic["speed"],
+                "traffic_freeflow": traffic["freeFlow"],
+                "traffic_congestion": traffic["congestion"]
+            })
+            
+            # Regular amenities (excluding EV stations)
+            amenities = get_nearby_amenities(lat, lon)
+            result["amenities"] = amenities
+            
+            # EV charging stations specifically
+            ev_stations = get_ev_charging_stations(lat, lon)
+            ev_count = len(ev_stations)
+            ev_names = [station["name"] for station in ev_stations]
+            ev_names_str = "; ".join(ev_names) if ev_names else "None"
+            
+            result.update({
+                "competitor_ev_count": ev_count,
+                "competitor_ev_names": ev_names_str,
+                "ev_stations_details": ev_stations
+            })
+            
+            # Road information using Google Roads API
+            road_info = get_road_info_google_roads(lat, lon)
+            result.update({
+                "snapped_road_name": road_info.get("snapped_road_name", "Unknown"),
+                "snapped_road_type": road_info.get("snapped_road_type", "Unknown"),
+                "nearest_road_name": road_info.get("nearest_road_name", "Unknown"),
+                "nearest_road_type": road_info.get("nearest_road_type", "Unknown"),
+                "place_id": road_info.get("place_id")
+            })
+            
+        except Exception as e:
+            st.warning(f"Error processing some data for site {lat}, {lon}: {e}")
+        
+        return result
 
 # ==============================
 # MAP FUNCTIONS
