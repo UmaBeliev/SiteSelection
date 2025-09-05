@@ -933,7 +933,7 @@ with tab1:
                                 st.write("📷 No photo available")
                 
                 with col_comp2:
-                    # Market Share Pie Chart
+                    # Market Share Analysis
                     st.subheader("📊 Competitor Market Share")
                     
                     # Extract brand/company names from station names
@@ -944,31 +944,25 @@ with tab1:
                         competitor_brands[brand] = competitor_brands.get(brand, 0) + 1
                     
                     if competitor_brands:
-                        # Create DataFrame for pie chart
-                        df_pie = pd.DataFrame(list(competitor_brands.items()), columns=['Brand', 'Count'])
-                        
-                        # Create pie chart using plotly (if available) or matplotlib alternative
-                        import matplotlib.pyplot as plt
-                        
-                        fig, ax = plt.subplots(figsize=(8, 6))
-                        colors = plt.cm.Set3(range(len(df_pie)))
-                        wedges, texts, autotexts = ax.pie(df_pie['Count'], labels=df_pie['Brand'], 
-                                                         autopct='%1.1f%%', colors=colors, startangle=90)
-                        ax.set_title('Competitor Market Share')
-                        
-                        # Make percentage text more readable
-                        for autotext in autotexts:
-                            autotext.set_color('black')
-                            autotext.set_fontweight('bold')
-                        
-                        st.pyplot(fig)
-                        
-                        # Show competitor list
-                        st.write("**Competitor Breakdown:**")
+                        # Create pie chart data for display
                         total_stations = sum(competitor_brands.values())
+                        
+                        # Display market share using streamlit's built-in components
+                        st.write("**Market Share Distribution:**")
+                        
+                        # Create a visual representation using progress bars
                         for brand, count in competitor_brands.items():
                             percentage = (count / total_stations) * 100
-                            st.write(f"• **{brand}**: {count} stations ({percentage:.1f}%)")
+                            st.write(f"**{brand}**: {count} stations ({percentage:.1f}%)")
+                            st.progress(percentage / 100)
+                        
+                        # Use Streamlit's bar chart
+                        st.write("**Visual Breakdown:**")
+                        chart_df = pd.DataFrame({
+                            'Brand': list(competitor_brands.keys()),
+                            'Stations': list(competitor_brands.values())
+                        })
+                        st.bar_chart(chart_df.set_index('Brand'), use_container_width=True)
                 
                 # Dedicated EV Competitors Map
                 st.subheader("🗺️ EV Competitors Map")
