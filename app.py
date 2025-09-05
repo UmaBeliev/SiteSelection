@@ -1,4 +1,10 @@
-station_lng = station.get('longitude')
+# Add EV competitor markers
+    ev_stations = site.get('ev_stations_details', [])
+    for i, station in enumerate(ev_stations):
+        try:
+            # Get coordinates from the station data
+            station_lat = station.get('latitude')
+            station_lng = station.get('longitude')
             
             if station_lat and station_lng:
                 ev_popup = f"""
