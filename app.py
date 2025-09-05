@@ -140,50 +140,72 @@ def add_google_traffic_layer(m):
         attr="Google Traffic", name="Traffic"
     ).add_to(m)
 
+
 def create_single_map(site, show_traffic=False):
-    m = folium.Map(location=[site["latitude"], site["longitude"]], zoom_start=15,
-                   tiles=f"https://mt1.google.com/vt/lyrs=m&x={{x}}&y={{y}}&z={{z}}&key={GOOGLE_API_KEY}", attr="Google Maps")
+    m = folium.Map(
+        location=[site["latitude"], site["longitude"]],
+        zoom_start=15,
+        tiles=f"https://mt1.google.com/vt/lyrs=m&x={{x}}&y={{y}}&z={{z}}&key={GOOGLE_API_KEY}",
+        attr="Google Maps"
+    )
+
+    # ✅ safer handling of missing keys
     popup = f"""
-    {site['formatted_address']}<br>
-    Power: {site['required_kva']} kVA<br>
-    Traffic: {site['traffic_congestion']} ({site['traffic_speed']}/{site['traffic_freeflow']} mph)<br>
-    Amenities: {site['amenities']}
+    {site.get('formatted_address', 'Unknown Address')}<br>
+    Power: {site.get('required_kva', 'N/A')} kVA<br>
+    Traffic: {site.get('traffic_congestion', 'N/A')} ({site.get('traffic_speed', 'N/A')}/{site.get('traffic_freeflow', 'N/A')} mph)<br>
+    Amenities: {site.get('amenities', 'N/A')}
     """
-    
+
     folium.Marker(
         [site["latitude"], site["longitude"]],
         popup=popup,
         tooltip="EV Site",
         icon=folium.Icon(color="pink")
     ).add_to(m)
-    if show_traffic: add_google_traffic_layer(m)
+
+    if show_traffic:
+        add_google_traffic_layer(m)
+
     folium.LayerControl().add_to(m)
     return m
+
 
 def create_batch_map(sites, show_traffic=False):
-    if not sites: return None
+    if not sites:
+        return None
+
     center_lat = sum(s["latitude"] for s in sites) / len(sites)
     center_lon = sum(s["longitude"] for s in sites) / len(sites)
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=6,
-                   tiles=f"https://mt1.google.com/vt/lyrs=m&x={{x}}&y={{y}}&z={{z}}&key={GOOGLE_API_KEY}", attr="Google Maps")
+
+    m = folium.Map(
+        location=[center_lat, center_lon],
+        zoom_start=6,
+        tiles=f"https://mt1.google.com/vt/lyrs=m&x={{x}}&y={{y}}&z={{z}}&key={GOOGLE_API_KEY}",
+        attr="Google Maps"
+    )
+
     for i, site in enumerate(sites):
         popup = f"""
-        Site {i+1}: {site['formatted_address']}<br>
-        Power: {site['required_kva']} kVA<br>
-        Traffic: {site['traffic_congestion']}<br>
-        Amenities: {site['amenities']}
+        Site {i+1}: {site.get('formatted_address', 'Unknown Address')}<br>
+        Power: {site.get('required_kva', 'N/A')} kVA<br>
+        Traffic: {site.get('traffic_congestion', 'N/A')}<br>
+        Amenities: {site.get('amenities', 'N/A')}
         """
-        
         folium.Marker(
-        [site["latitude"], site["longitude"]],
-        popup=popup,
-        tooltip="EV Site",
-        icon=folium.Icon(color="pink")
-    ).add_to(m)
-    if show_traffic: add_google_traffic_layer(m)
+            [site["latitude"], site["longitude"]],
+            popup=popup,
+            tooltip="EV Site",
+            icon=folium.Icon(color="pink")
+        ).add_to(m)
+
+    if show_traffic:
+        add_google_traffic_layer(m)
+
     folium.LayerControl().add_to(m)
     return m
 
+    
 # ==============================
 #           STREAMLIT APP
 # ==============================
