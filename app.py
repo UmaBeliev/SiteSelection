@@ -57,35 +57,109 @@ def get_geocode_details(lat, lon):
     return {}
 
 @st.cache_data
-def get_nearby_amenities(lat, lon, radius=300, types=None):
-    """Get nearby amenities using Google Places API"""
-    if types is None:
-        types = ["charging_station","restaurant","cafe","supermarket","parking","gas_station"]
-    amenities=[]
+def get_nearby_amenities(lat, lon, radius=500):
+    """Get nearby amenities using Google Places API (Nearby Search)"""
+    amenities = []
+    
+    # Define place types according to Google Places API documentation
+    place_types = [
+        "gas_station",      # Petrol stations
+        "restaurant",       # Restaurants
+        "cafe",            # Cafes
+        "shopping_mall",   # Shopping centers
+        "supermarket",     # Supermarkets
+        "hospital",        # Hospitals
+        "pharmacy",        # Pharmacies
+        "bank",           # Banks
+        "atm",            # ATMs
+        "lodging"         # Hotels
+    ]
+    
     try:
-        for t in types:
-            r = requests.get("https://maps.googleapis.com/maps/api/place/nearbysearch/json",
-                             params={"location": f"{lat},{lon}", "radius": radius, "type": t, "key": GOOGLE_API_KEY}, timeout=10)
-            results = r.json().get("results",[])
-            for res in results:
-                name = res.get("name")
-                if name:
-                    amenities.append(f"{name} ({t})")
-        return ", ".join(amenities[:10]) if amenities else "None"  # Limit to first 10 amenities
+        url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+        
+        for place_type in place_types:
+            params = {
+                "location": f"{lat},{lon}",
+                "radius": radius,
+                "type": place_type,
+                "key": GOOGLE_API_KEY
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                if data.get("status") == "OK":
+                    results = data.get("results", [])
+                    
+                    for place in results[:3]:  # Limit to top 3 per category
+                        name = place.get("name", "Unknown")
+                        rating = place.get("rating", "N/A")
+                        
+                        # Format place type for display
+                        display_type = place_type.replace("_", " ").title()
+                        
+                        amenity_info = f"{name} ({display_type})"
+                        if rating != "N/A":
+                            amenity_info += f" ⭐{rating}"
+                            
+                        amenities.append(amenity_info)
+                
+                elif data.get("status") == "ZERO_RESULTS":
+                    continue  # No results for this type
+                else:
+                    st.warning(f"Places API error for {place_type}: {data.get('status')}")
+            
+            else:
+                st.warning(f"HTTP error {response.status_code} for {place_type}")
+            
+            # Small delay to avoid rate limiting
+            time.sleep(0.1)
+        
+        # EV Charging stations - separate search with keyword
+        ev_params = {
+            "location": f"{lat},{lon}",
+            "radius": radius,
+            "keyword": "electric vehicle charging station",
+            "key": GOOGLE_API_KEY
+        }
+        
+        ev_response = requests.get(url, params=ev_params, timeout=10)
+        if ev_response.status_code == 200:
+            ev_data = ev_response.json()
+            if ev_data.get("status") == "OK":
+                ev_results = ev_data.get("results", [])
+                for ev_place in ev_results[:3]:
+                    name = ev_place.get("name", "Unknown")
+                    rating = ev_place.get("rating", "N/A")
+                    amenity_info = f"{name} (EV Charging)"
+                    if rating != "N/A":
+                        amenity_info += f" ⭐{rating}"
+                    amenities.append(amenity_info)
+        
+        return "; ".join(amenities[:15]) if amenities else "None nearby"
+        
     except Exception as e:
         st.warning(f"Places API error: {e}")
-        return f"Error: {e}"
+        return f"Error retrieving amenities: {str(e)}"
 
 @st.cache_data
-def get_road_info_improved(lat, lon):
+def get_road_info_google_roads(lat, lon):
     """
-    Improved road information retrieval using multiple methods
+    Get road information using Google Roads API according to official documentation
+    https://developers.google.com/maps/documentation/roads/overview
     """
-    road_info = {"road_type": "Unknown", "speed_limit": None, "road_name": "Unknown"}
+    road_info = {
+        "road_name": "Unknown",
+        "road_type": "Unknown", 
+        "speed_limit": None,
+        "place_id": None
+    }
     
-    # Method 1: Try Google Roads API
     try:
-        # Snap to roads first
+        # Step 1: Snap to Roads API
         snap_url = "https://roads.googleapis.com/v1/snapToRoads"
         snap_params = {
             "path": f"{lat},{lon}",
@@ -93,115 +167,137 @@ def get_road_info_improved(lat, lon):
             "key": GOOGLE_API_KEY
         }
         
-        r = requests.get(snap_url, params=snap_params, timeout=10)
-        snap_data = r.json()
+        snap_response = requests.get(snap_url, params=snap_params, timeout=10)
         
-        if "snappedPoints" in snap_data and snap_data["snappedPoints"]:
-            snapped_point = snap_data["snappedPoints"][0]
-            place_id = snapped_point.get("placeId")
+        if snap_response.status_code == 200:
+            snap_data = snap_response.json()
             
-            if place_id:
-                # Try to get speed limit
-                try:
+            if "snappedPoints" in snap_data and snap_data["snappedPoints"]:
+                snapped_point = snap_data["snappedPoints"][0]
+                place_id = snapped_point.get("placeId")
+                
+                if place_id:
+                    road_info["place_id"] = place_id
+                    
+                    # Step 2: Get Speed Limits
                     speed_url = "https://roads.googleapis.com/v1/speedLimits"
                     speed_params = {
                         "placeId": place_id,
                         "key": GOOGLE_API_KEY
                     }
-                    speed_r = requests.get(speed_url, params=speed_params, timeout=10)
-                    speed_data = speed_r.json()
                     
-                    if "speedLimits" in speed_data and speed_data["speedLimits"]:
-                        speed_limit_info = speed_data["speedLimits"][0]
-                        road_info["speed_limit"] = speed_limit_info.get("speedLimit")
+                    speed_response = requests.get(speed_url, params=speed_params, timeout=10)
+                    
+                    if speed_response.status_code == 200:
+                        speed_data = speed_response.json()
                         
-                except Exception as e:
-                    st.warning(f"Speed limit API error: {e}")
-                
-                # Get place details for road type
-                try:
+                        if "speedLimits" in speed_data and speed_data["speedLimits"]:
+                            speed_limit_data = speed_data["speedLimits"][0]
+                            road_info["speed_limit"] = speed_limit_data.get("speedLimit")
+                    
+                    # Step 3: Get place details for road name and classification
                     place_url = "https://maps.googleapis.com/maps/api/place/details/json"
                     place_params = {
                         "place_id": place_id,
-                        "fields": "name,types,geometry",
+                        "fields": "name,types,geometry,formatted_address",
                         "key": GOOGLE_API_KEY
                     }
-                    place_r = requests.get(place_url, params=place_params, timeout=10)
-                    place_data = place_r.json()
                     
-                    if place_data.get("status") == "OK":
-                        result = place_data.get("result", {})
-                        road_info["road_name"] = result.get("name", "Unknown")
-                        
-                        # Determine road type from place types
-                        place_types = result.get("types", [])
-                        if "highway" in place_types:
-                            road_info["road_type"] = "Highway"
-                        elif "primary" in place_types or "trunk" in place_types:
-                            road_info["road_type"] = "Primary Road"
-                        elif "secondary" in place_types:
-                            road_info["road_type"] = "Secondary Road"
-                        elif "tertiary" in place_types:
-                            road_info["road_type"] = "Tertiary Road"
-                        elif "residential" in place_types:
-                            road_info["road_type"] = "Residential"
-                        elif "route" in place_types:
-                            road_info["road_type"] = "Route"
-                        
-                except Exception as e:
-                    st.warning(f"Place details API error: {e}")
+                    place_response = requests.get(place_url, params=place_params, timeout=10)
                     
+                    if place_response.status_code == 200:
+                        place_data = place_response.json()
+                        
+                        if place_data.get("status") == "OK":
+                            result = place_data.get("result", {})
+                            road_info["road_name"] = result.get("name", "Unknown Road")
+                            
+                            # Classify road type based on Google Places types
+                            place_types = result.get("types", [])
+                            road_info["road_type"] = classify_road_type(place_types, road_info["road_name"])
+        
+        else:
+            st.warning(f"Roads API HTTP error: {snap_response.status_code}")
+            
     except Exception as e:
-        st.warning(f"Roads API error: {e}")
+        st.warning(f"Google Roads API error: {e}")
     
-    # Method 2: Fallback to reverse geocoding for road information
-    if road_info["road_type"] == "Unknown":
+    # Fallback: Use reverse geocoding if Roads API fails
+    if road_info["road_name"] == "Unknown":
         try:
-            geocode_details = get_geocode_details(lat, lon)
-            if geocode_details.get("street"):
-                road_info["road_name"] = geocode_details["street"]
+            geocode_url = "https://maps.googleapis.com/maps/api/geocode/json"
+            geocode_params = {
+                "latlng": f"{lat},{lon}",
+                "key": GOOGLE_API_KEY
+            }
+            
+            geocode_response = requests.get(geocode_url, params=geocode_params, timeout=10)
+            
+            if geocode_response.status_code == 200:
+                geocode_data = geocode_response.json()
                 
-                # Simple heuristic based on road name
-                road_name = geocode_details["street"].lower()
-                if any(term in road_name for term in ["motorway", "highway", "m1", "m25", "a1", "a40"]):
-                    road_info["road_type"] = "Highway/Motorway"
-                elif road_name.startswith("a") and road_name[1:].isdigit():
-                    road_info["road_type"] = "A Road"
-                elif road_name.startswith("b") and road_name[1:].isdigit():
-                    road_info["road_type"] = "B Road"
-                elif any(term in road_name for term in ["street", "road", "avenue", "lane", "drive"]):
-                    road_info["road_type"] = "Local Road"
-                else:
-                    road_info["road_type"] = "Local Road"
+                if geocode_data.get("status") == "OK" and geocode_data.get("results"):
+                    # Extract road name from address components
+                    components = geocode_data["results"][0].get("address_components", [])
                     
+                    for component in components:
+                        types = component.get("types", [])
+                        if "route" in types:
+                            road_info["road_name"] = component.get("long_name", "Unknown Road")
+                            road_info["road_type"] = classify_road_type_from_name(road_info["road_name"])
+                            break
+            
         except Exception as e:
             st.warning(f"Geocoding fallback error: {e}")
     
     return road_info
 
-@st.cache_data
-def get_distance_matrix(orig_lat, orig_lon, dest_lat, dest_lon):
-    """Get travel time using Google Distance Matrix API"""
-    try:
-        r = requests.get("https://maps.googleapis.com/maps/api/distancematrix/json",
-                         params={"origins":f"{orig_lat},{orig_lon}",
-                                 "destinations":f"{dest_lat},{dest_lon}",
-                                 "key":GOOGLE_API_KEY,
-                                 "departure_time":"now",
-                                 "traffic_model":"best_guess"}, timeout=10)
-        data = r.json()
-        if data.get("status") == "OK" and data.get("rows"):
-            element = data["rows"][0]["elements"][0]
-            if element.get("status") == "OK":
-                # Try traffic-aware duration first
-                dur = element.get("duration_in_traffic")
-                if not dur:
-                    dur = element.get("duration")
-                if dur:
-                    return round(dur.get("value", 0) / 60, 1)  # Convert to minutes
-    except Exception as e:
-        st.warning(f"Distance Matrix API error: {e}")
-    return None
+def classify_road_type(place_types, road_name=""):
+    """Classify road type based on Google Places API types and road name"""
+    
+    # Primary classification from Google Places types
+    if "highway" in place_types:
+        return "Highway"
+    elif "primary" in place_types:
+        return "Primary Road"
+    elif "secondary" in place_types:
+        return "Secondary Road"
+    elif "tertiary" in place_types:
+        return "Tertiary Road"
+    elif "residential" in place_types:
+        return "Residential Street"
+    elif "service" in place_types:
+        return "Service Road"
+    elif "trunk" in place_types:
+        return "Trunk Road"
+    elif "route" in place_types:
+        return "Route"
+    else:
+        # Fallback to name-based classification
+        return classify_road_type_from_name(road_name)
+
+def classify_road_type_from_name(road_name):
+    """Classify road type based on road name patterns (UK-focused)"""
+    if not road_name or road_name == "Unknown Road":
+        return "Local Road"
+    
+    road_name_lower = road_name.lower()
+    
+    # UK road classifications
+    if any(keyword in road_name_lower for keyword in ["motorway", "m1", "m25", "m2", "m3", "m4", "m5", "m6"]):
+        return "Motorway"
+    elif road_name_lower.startswith("a") and len(road_name) > 1 and road_name[1:].split()[0].isdigit():
+        return "A Road"
+    elif road_name_lower.startswith("b") and len(road_name) > 1 and road_name[1:].split()[0].isdigit():
+        return "B Road"
+    elif any(keyword in road_name_lower for keyword in ["dual carriageway", "bypass"]):
+        return "Dual Carriageway"
+    elif any(keyword in road_name_lower for keyword in ["street", "road", "avenue", "lane", "drive", "close", "way"]):
+        return "Local Road"
+    elif any(keyword in road_name_lower for keyword in ["roundabout", "circus"]):
+        return "Roundabout"
+    else:
+        return "Local Road"
 
 @st.cache_resource
 def get_transformer():
@@ -272,11 +368,8 @@ def process_site(lat, lon, fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw):
         # Amenities
         amenities = get_nearby_amenities(lat, lon)
         
-        # Improved road information
-        road_info = get_road_info_improved(lat, lon)
-        
-        # Travel time to London center
-        travel_time_to_center = get_distance_matrix(lat, lon, 51.5074, -0.1278)
+        # Road information using proper Google Roads API
+        road_info = get_road_info_google_roads(lat, lon)
         
         return {
             "latitude": lat,
@@ -305,7 +398,7 @@ def process_site(lat, lon, fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw):
             "road_type": road_info["road_type"],
             "road_name": road_info["road_name"],
             "speed_limit": road_info["speed_limit"],
-            "travel_time_to_center_min": travel_time_to_center
+            "place_id": road_info.get("place_id")
         }
 
 # ==============================
@@ -337,8 +430,7 @@ def create_single_map(site, show_traffic=False):
     <b>🛣️ Road:</b> {site.get('road_name','N/A')} ({site.get('road_type','N/A')})<br>
     <b>🚗 Speed Limit:</b> {site.get('speed_limit','N/A')} mph<br>
     <b>🚦 Traffic:</b> {site.get('traffic_congestion','N/A')} ({site.get('traffic_speed','N/A')}/{site.get('traffic_freeflow','N/A')} mph)<br>
-    <b>⏱️ To London:</b> {site.get('travel_time_to_center_min','N/A')} min<br>
-    <b>🏪 Nearby:</b> {site.get('amenities','N/A')[:100]}{'...' if len(str(site.get('amenities',''))) > 100 else ''}
+    <b>🏪 Nearby:</b> {site.get('amenities','N/A')[:150]}{'...' if len(str(site.get('amenities',''))) > 150 else ''}
     """
     
     folium.Marker(
@@ -387,7 +479,6 @@ def create_batch_map(sites, show_traffic=False):
         <b>🛣️ Road:</b> {site.get('road_name','N/A')} ({site.get('road_type','N/A')})<br>
         <b>🚗 Speed Limit:</b> {site.get('speed_limit','N/A')} mph<br>
         <b>🚦 Traffic:</b> {site.get('traffic_congestion','N/A')}<br>
-        <b>⏱️ To London:</b> {site.get('travel_time_to_center_min','N/A')} min<br>
         <b>🏪 Nearby:</b> {site.get('amenities','N/A')[:100]}{'...' if len(str(site.get('amenities',''))) > 100 else ''}
         """
         
@@ -475,8 +566,8 @@ with tab1:
         with col3:
             st.metric("Traffic Level", site["traffic_congestion"])
         with col4:
-            travel_time = site["travel_time_to_center_min"]
-            st.metric("To London Center", f"{travel_time} min" if travel_time else "N/A")
+            speed_limit = site["speed_limit"]
+            st.metric("Speed Limit", f"{speed_limit} mph" if speed_limit else "N/A")
         
         # Detailed information
         st.subheader("📋 Detailed Site Information")
@@ -500,6 +591,8 @@ with tab1:
             st.write(f"**Road Name:** {site['road_name']}")
             st.write(f"**Road Type:** {site['road_type']}")
             st.write(f"**Speed Limit:** {site['speed_limit']} mph" if site['speed_limit'] else "Speed Limit: N/A")
+            if site.get('place_id'):
+                st.write(f"**Google Place ID:** {site['place_id']}")
         
         with detail_tabs[3]:
             st.write(f"**Congestion Level:** {site['traffic_congestion']}")
