@@ -65,7 +65,7 @@ def extract_brand_name(station_name):
     return "Other"
 
 def create_pie_chart_data(brands_dict):
-    """Create pie chart data for market share analysis"""
+    """Create pie chart image (base64) with percent-only slice labels + legend for brands"""
     if not brands_dict:
         return None
     
@@ -74,37 +74,43 @@ def create_pie_chart_data(brands_dict):
         import io
         import base64
         
-        # Create the pie chart
         fig, ax = plt.subplots(figsize=(8, 6))
-        
+
         labels = list(brands_dict.keys())
         sizes = list(brands_dict.values())
-        colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9']
-        
-        # Create pie chart
-        wedges, texts, autotexts = ax.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90, colors=colors[:len(labels)])
-        
-        # Enhance appearance
-        ax.set_title('EV Charging Network Market Share', fontsize=14, fontweight='bold', pad=20)
-        
-        # Make percentage text bold and larger
+
+        # Percent-only labels, smaller font via autotexts below; no labels on slices
+        wedges, texts, autotexts = ax.pie(
+            sizes,
+            labels=None,
+            autopct='%1.1f%%',
+            startangle=90
+        )
+
+        # Make percentage text smaller and clear
         for autotext in autotexts:
+            autotext.set_fontsize(8)
             autotext.set_color('white')
             autotext.set_fontweight('bold')
-            autotext.set_fontsize(10)
-        
-        # Equal aspect ratio ensures that pie is drawn as a circle
+
+        ax.set_title('EV Charging Network Market Share', fontsize=14, fontweight='bold', pad=20)
         ax.axis('equal')
-        
-        # Save to buffer
+
+        # Add legend with full brand names
+        ax.legend(
+            wedges, labels,
+            title="Brands",
+            loc="center left",
+            bbox_to_anchor=(1, 0.5),
+            fontsize=9,
+            title_fontsize=10
+        )
+
         buffer = io.BytesIO()
         plt.savefig(buffer, format='png', bbox_inches='tight', dpi=300, facecolor='white')
         buffer.seek(0)
-        
-        # Convert to base64 for display
         img_base64 = base64.b64encode(buffer.getvalue()).decode()
         plt.close(fig)
-        
         return img_base64
     except Exception as e:
         st.warning(f"Could not create pie chart: {e}")
@@ -515,7 +521,7 @@ def get_tomtom_traffic(lat, lon):
     
     return {"speed": None, "freeFlow": None, "congestion": "N/A"}
 
-def process_site(lat, lon, fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw):
+def process_site(lat, lon, fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw, competitor_radius, amenities_radius):
     """Process a single site and gather all information"""
     with st.spinner(f"Processing site at {lat}, {lon}..."):
         result = {
@@ -538,6 +544,13 @@ def process_site(lat, lon, fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw):
             "rapid_chargers": rapid,
             "ultra_chargers": ultra,
             "required_kva": 0,
+            # store the exact power settings used
+            "fast_kw_used": fast_kw,
+            "rapid_kw_used": rapid_kw,
+            "ultra_kw_used": ultra_kw,
+            # store the exact radii used
+            "competitor_radius_used": competitor_radius,
+            "amenities_radius_used": amenities_radius,
             "traffic_speed": None,
             "traffic_freeflow": None,
             "traffic_congestion": "N/A",
@@ -584,10 +597,10 @@ def process_site(lat, lon, fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw):
                 "traffic_congestion": traffic["congestion"]
             })
             
-            amenities = get_nearby_amenities(lat, lon)
+            amenities = get_nearby_amenities(lat, lon, radius=amenities_radius)
             result["amenities"] = amenities
             
-            ev_stations = get_ev_charging_stations(lat, lon)
+            ev_stations = get_ev_charging_stations(lat, lon, radius=competitor_radius)
             ev_count = len(ev_stations)
             ev_names = [station["name"] for station in ev_stations]
             ev_names_str = "; ".join(ev_names) if ev_names else "None"
@@ -681,7 +694,7 @@ def create_single_map(site, show_traffic=False):
     folium.LayerControl().add_to(m)
     return m
 
-def create_sites_only_map(sites):
+def create_sites_only_map(sites, show_traffic=False):
     """Create a map showing only the proposed sites (no competitors)"""
     if not sites:
         return None
@@ -716,6 +729,9 @@ def create_sites_only_map(sites):
             icon=folium.Icon(color="pink", icon="bolt", prefix="fa")
         ).add_to(m)
     
+    if show_traffic:
+        add_google_traffic_layer(m)
+
     folium.LayerControl().add_to(m)
     return m
 
@@ -776,7 +792,7 @@ def create_batch_map(sites, show_traffic=False):
                         tooltip=f"⚡ Competitor: {station.get('name', 'EV Station')}",
                         icon=folium.Icon(color="red", icon="flash", prefix="fa")
                     ).add_to(m)
-            except Exception as e:
+            except Exception:
                 continue
     
     if show_traffic:
@@ -802,9 +818,14 @@ with st.sidebar:
     fast_kw = st.number_input("Fast Charger Power (kW)", value=22, min_value=1, max_value=200, help="Power rating for fast chargers")
     rapid_kw = st.number_input("Rapid Charger Power (kW)", value=60, min_value=1, max_value=350, help="Power rating for rapid chargers")
     ultra_kw = st.number_input("Ultra Rapid Charger Power (kW)", value=150, min_value=1, max_value=400, help="Power rating for ultra rapid chargers")
-    
+
+    st.subheader("Radius Settings")
+    competitor_radius = st.number_input("Competitor Search Radius (m)", min_value=100, max_value=5000, value=1000, step=50, help="Search radius for competitor EV stations")
+    amenities_radius = st.number_input("Amenities Search Radius (m)", min_value=100, max_value=3000, value=500, step=50, help="Search radius for nearby amenities")
+
     st.subheader("Map Settings")
-    show_traffic = st.checkbox("Show Google Traffic Layer", value=False)
+    show_traffic_single = st.checkbox("Show Traffic Layer (Single Site)", value=False)
+    show_traffic_batch = st.checkbox("Show Traffic Layer (Batch Maps)", value=False)
     
     st.subheader("API Status")
     st.success("✅ Google Maps API") if GOOGLE_API_KEY else st.error("❌ Google Maps API")
@@ -834,7 +855,12 @@ with tab1:
             if not (-90 <= lat_float <= 90) or not (-180 <= lon_float <= 180):
                 st.error("Invalid coordinates. Latitude must be between -90 and 90, longitude between -180 and 180.")
             else:
-                site = process_site(lat_float, lon_float, fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw)
+                site = process_site(
+                    lat_float, lon_float,
+                    fast, rapid, ultra,
+                    fast_kw, rapid_kw, ultra_kw,
+                    competitor_radius, amenities_radius
+                )
                 st.session_state["single_site"] = site
                 st.success("✅ Site analysis completed!")
         except ValueError:
@@ -844,7 +870,10 @@ with tab1:
 
     if "single_site" in st.session_state:
         site = st.session_state["single_site"]
-        
+
+        # Info banner with actual radii used
+        st.info(f"Using radii — Competitors: **{site.get('competitor_radius_used', 'N/A')} m**, Amenities: **{site.get('amenities_radius_used', 'N/A')} m**.")
+
         # Key metrics
         col1, col2, col3, col4 = st.columns(4)
         
@@ -871,9 +900,9 @@ with tab1:
             st.write(f"**British Grid:** {site.get('easting', 'N/A')}, {site.get('northing', 'N/A')}")
         
         with detail_tabs[1]:
-            st.write(f"**Fast Chargers:** {site.get('fast_chargers', 0)} × {fast_kw}kW")
-            st.write(f"**Rapid Chargers:** {site.get('rapid_chargers', 0)} × {rapid_kw}kW")
-            st.write(f"**Ultra Chargers:** {site.get('ultra_chargers', 0)} × {ultra_kw}kW")
+            st.write(f"**Fast Chargers:** {site.get('fast_chargers', 0)} × {site.get('fast_kw_used', fast_kw)} kW")
+            st.write(f"**Rapid Chargers:** {site.get('rapid_chargers', 0)} × {site.get('rapid_kw_used', rapid_kw)} kW")
+            st.write(f"**Ultra Chargers:** {site.get('ultra_chargers', 0)} × {site.get('ultra_kw_used', ultra_kw)} kW")
             st.write(f"**Total Required kVA:** {site.get('required_kva', 'N/A')}")
         
         with detail_tabs[2]:
@@ -959,7 +988,7 @@ with tab1:
         
         with detail_tabs[6]:
             st.markdown("*Pink marker: Your proposed site | Red markers: Competitor EV stations*")
-            map_obj = create_single_map(site, show_traffic)
+            map_obj = create_single_map(site, show_traffic_single)
             st_folium(map_obj, width=700, height=500, returned_objects=["last_object_clicked"])
 
 # --- BATCH PROCESSING ---
@@ -1013,7 +1042,8 @@ with tab2:
                                 int(row.get("fast", 0)), 
                                 int(row.get("rapid", 0)), 
                                 int(row.get("ultra", 0)),
-                                fast_kw, rapid_kw, ultra_kw
+                                fast_kw, rapid_kw, ultra_kw,
+                                competitor_radius, amenities_radius
                             )
                             results.append(site)
                         except Exception as e:
@@ -1039,7 +1069,11 @@ with tab2:
         
         successful_results = [r for r in results if "error" not in r]
         failed_results = [r for r in results if "error" in r]
-        
+
+        # Info banner with actual radii used (same for all sites in this run)
+        if successful_results:
+            st.info(f"Using radii — Competitors: **{successful_results[0].get('competitor_radius_used', 'N/A')} m**, Amenities: **{successful_results[0].get('amenities_radius_used', 'N/A')} m**.")
+
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
@@ -1071,7 +1105,7 @@ with tab2:
                 with map_col1:
                     st.markdown("**Sites Only Map**")
                     st.markdown("*Pink markers: Your proposed EV sites*")
-                    sites_map = create_sites_only_map(successful_results)
+                    sites_map = create_sites_only_map(successful_results, show_traffic=show_traffic_batch)
                     if sites_map:
                         st_folium(sites_map, width=350, height=400, key="sites_only_map")
                     else:
@@ -1080,7 +1114,7 @@ with tab2:
                 with map_col2:
                     st.markdown("**Sites + Competitors Map**")
                     st.markdown("*Pink markers: Your sites | Red markers: Competitors*")
-                    full_map = create_batch_map(successful_results, show_traffic=show_traffic)
+                    full_map = create_batch_map(successful_results, show_traffic=show_traffic_batch)
                     if full_map:
                         st_folium(full_map, width=350, height=400, key="full_batch_map")
                     else:
@@ -1095,7 +1129,7 @@ with tab2:
                 
                 with batch_tabs[0]:
                     st.markdown("*Pink markers: Your proposed EV sites*")
-                    sites_map = create_sites_only_map(successful_results)
+                    sites_map = create_sites_only_map(successful_results, show_traffic=show_traffic_batch)
                     if sites_map:
                         st_folium(sites_map, width=700, height=500, key="batch_sites_only")
                     else:
@@ -1103,7 +1137,7 @@ with tab2:
                 
                 with batch_tabs[1]:
                     st.markdown("*Pink markers: Your proposed EV sites | Red markers: Competitor EV stations*")
-                    batch_map = create_batch_map(successful_results, show_traffic=show_traffic)
+                    batch_map = create_batch_map(successful_results, show_traffic=show_traffic_batch)
                     if batch_map:
                         st_folium(batch_map, width=700, height=500, key="batch_full_map")
                     else:
@@ -1188,6 +1222,11 @@ with tab2:
                         'Fast_Chargers': int(site.get('fast_chargers', 0)),
                         'Rapid_Chargers': int(site.get('rapid_chargers', 0)),
                         'Ultra_Chargers': int(site.get('ultra_chargers', 0)),
+                        'Fast_kW_Used': site.get('fast_kw_used', ''),
+                        'Rapid_kW_Used': site.get('rapid_kw_used', ''),
+                        'Ultra_kW_Used': site.get('ultra_kw_used', ''),
+                        'Competitor_Radius_Used_m': site.get('competitor_radius_used', ''),
+                        'Amenities_Radius_Used_m': site.get('amenities_radius_used', ''),
                         'Required_kVA': float(site.get('required_kva', 0)),
                         'Snapped_Road_Name': str(site.get('snapped_road_name', '')),
                         'Snapped_Road_Type': str(site.get('snapped_road_type', '')),
