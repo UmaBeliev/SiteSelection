@@ -1,162 +1,4 @@
-# Display batch results
-    if "batch_results" in st.session_state:
-        results = st.session_state["batch_results"]
-        
-        st.subheader("📊 Batch Analysis Results")
-        
-        # Filter out any failed results
-        successful_results = [r for r in results if "error" not in r]
-        failed_results = [r for r in results if "error" in r]
-        
-        # Key metrics
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("Total Sites", len(results))
-        with col2:
-            st.metric("Successful", len(successful_results))
-        with col3:
-            if successful_results:
-                avg_kva = sum(r.get("required_kva", 0) for r in successful_results) / len(successful_results)
-                st.metric("Avg kVA", f"{avg_kva:.1f}")
-            else:
-                st.metric("Avg kVA", "N/A")
-        with col4:
-            if successful_results:
-                avg_competitors = sum(r.get("competitor_ev_count", 0) for r in successful_results) / len(successful_results)
-                st.metric("Avg Competitors", f"{avg_competitors:.1f}")
-            else:
-                st.metric("Avg Competitors", "N/A")
-        
-        # For large datasets (>50 sites), skip detailed display and go straight to download
-        if len(successful_results) > 50:
-            st.info(f"📊 Large dataset detected ({len(successful_results)} sites). Skipping detailed analysis display for performance. Download options available below.")
-            
-            # Show maps only
-            if successful_results:
-                st.subheader("🗺️ Site Maps")
-                
-                # Create two maps side by side
-                map_col1, map_col2 = st.columns(2)
-                
-                with map_col1:
-                    st.markdown("**Sites Only Map**")
-                    st.markdown("*Pink markers: Your proposed EV sites*")
-                    sites_map = create_sites_only_map(successful_results)
-                    if sites_map:
-                        st_folium(sites_map, width=350, height=400, key="sites_only_map")
-                    else:
-                        st.error("Unable to create sites map.")
-                
-                with map_col2:
-                    st.markdown("**Sites + Competitors Map**")
-                    st.markdown("*Pink markers: Your sites | Red markers: Competitors*")
-                    full_map = create_batch_map(successful_results, show_traffic=show_traffic)
-                    if full_map:
-                        st_folium(full_map, width=350, height=400, key="full_batch_map")
-                    else:
-                        st.error("Unable to create full map.")
-        
-        else:
-            # For smaller datasets, show full detailed interface
-            if successful_results:
-                st.subheader("📋 Detailed Batch Analysis")
-                
-                batch_tabs = st.tabs(["🏠 All Locations", "🔌 Power Summary", "🛣️ Road Analysis", "🚦 Traffic Summary", "🏪 Amenities Overview", "⚡ EV Competition", "🗺️ Sites Only", "🗺️ Sites + Competitors"])
-                
-                with batch_tabs[0]:
-                    st.write("**📍 Site Locations Summary**")
-                    for i, site in enumerate(successful_results):
-                        with st.expander(f"📍 Site {i+1}: {site.get('formatted_address', 'Unknown Address')}"):
-                            col_a, col_b = st.columns(2)
-                            with col_a:
-                                st.write(f"**Address:** {site.get('formatted_address', 'N/A')}")
-                                st.write(f"**Postcode:** {site.get('postcode', 'N/A')}")
-                                st.write(f"**Ward:** {site.get('ward', 'N/A')}")
-                            with col_b:
-                                st.write(f"**District:** {site.get('district', 'N/A')}")
-                                st.write(f"**British Grid:** {site.get('easting', 'N/A')}, {site.get('northing', 'N/A')}")
-                                st.write(f"**Coordinates:** {site.get('latitude', 'N/A')}, {site.get('longitude', 'N/A')}")
-                
-                with batch_tabs[1]:
-                    st.write("**⚡ Power Requirements Overview**")
-                    total_fast = sum(r.get("fast_chargers", 0) for r in successful_results)
-                    total_rapid = sum(r.get("rapid_chargers", 0) for r in successful_results)
-                    total_ultra = sum(r.get("ultra_chargers", 0) for r in successful_results)
-                    total_kva = sum(r.get("required_kva", 0) for r in successful_results)
-                    
-                    power_col1, power_col2 = st.columns(2)
-                    with power_col1:
-                        st.write(f"**Total Fast Chargers:** {total_fast} × {fast_kw}kW")
-                        st.write(f"**Total Rapid Chargers:** {total_rapid} × {rapid_kw}kW")
-                        st.write(f"**Total Ultra Chargers:** {total_ultra} × {ultra_kw}kW")
-                    with power_col2:
-                        st.write(f"**Total Required kVA:** {total_kva:.1f}")
-                        st.write(f"**Average kVA per Site:** {total_kva/len(successful_results):.1f}")
-                        st.write(f"**Total Chargers:** {total_fast + total_rapid + total_ultra}")
-                    
-                    # Power breakdown by site
-                    st.write("**📊 Power by Site:**")
-                    for i, site in enumerate(successful_results):
-                        st.write(f"Site {i+1}: {site.get('required_kva', 'N/A')} kVA ({site.get('fast_chargers', 0)}F + {site.get('rapid_chargers', 0)}R + {site.get('ultra_chargers', 0)}U)")
-                
-                with batch_tabs[2]:
-                    st.write("**🛣️ Road Information Analysis**")
-                    road_types = {}
-                    for site in successful_results:
-                        road_type = site.get('snapped_road_type', 'Unknown')
-                        road_types[road_type] = road_types.get(road_type, 0) + 1
-                    
-                    road_col1, road_col2 = st.columns(2)
-                    with road_col1:
-                        st.write("**Road Type Distribution:**")
-                        for road_type, count in road_types.items():
-                            percentage = (count / len(successful_results)) * 100
-                            st.write(f"• {road_type}: {count} sites ({percentage:.1f}%)")
-                    
-                    with road_col2:
-                        st.write("**Road Details by Site:**")
-                        for i, site in enumerate(successful_results):
-                            st.write(f"**Site {i+1}:** {site.get('snapped_road_name', 'Unknown')} ({site.get('snapped_road_type', 'Unknown')})")
-                
-                with batch_tabs[3]:
-                    st.write("**🚦 Traffic Analysis Summary**")
-                    traffic_levels = {"Low": 0, "Medium": 0, "High": 0, "N/A": 0}
-                    for site in successful_results:
-                        level = site.get('traffic_congestion', 'N/A')
-                        traffic_levels[level] = traffic_levels.get(level, 0) + 1
-                    
-                    traffic_col1, traffic_col2 = st.columns(2)
-                    with traffic_col1:
-                        st.write("**Traffic Congestion Levels:**")
-                        for level, count in traffic_levels.items():
-                            if count > 0:
-                                percentage = (count / len(successful_results)) * 100
-                                st.write(f"• {level}: {count} sites ({percentage:.1f}%)")
-                    
-                    with traffic_col2:
-                        st.write("**Traffic by Site:**")
-                        for i, site in enumerate(successful_results):
-                            traffic = site.get('traffic_congestion', 'N/A')
-                            speed = site.get('traffic_speed', 'N/A')
-                            st.write(f"**Site {i+1}:** {traffic} congestion" + (f" ({speed} mph)" if speed != 'N/A' and speed else ""))
-                
-                with batch_tabs[4]:
-                    st.write("**🏪 Amenities Overview**")
-                    st.write("**Nearby Amenities by Site:**")
-                    for i, site in enumerate(successful_results):
-                        with st.expander(f"🏪 Site {i+1} Amenities"):
-                            amenities = site.get('amenities', 'None')
-                            if amenities and amenities != 'None':
-                                amenity_list = amenities.split(';')
-                                for amenity in amenity_list[:10]:  # Show first 10
-                                    st.write(f"• {amenity.strip()}")
-                            else:
-                                st.write("No nearby amenities found")
-                
-                with batch_tabs[5]:
-                    # EV Competition Analysis
-                    simport streamlit as st
+import streamlit as st
 import pandas as pd
 import requests
 import folium
@@ -1256,7 +1098,7 @@ with tab2:
         successful_results = [r for r in results if "error" not in r]
         failed_results = [r for r in results if "error" in r]
         
-        # Key metrics - beautiful layout like single site
+        # Key metrics
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
@@ -1276,47 +1118,226 @@ with tab2:
             else:
                 st.metric("Avg Competitors", "N/A")
         
-        # Beautiful tabbed interface like single site
-        if successful_results:
-            st.subheader("📋 Detailed Batch Analysis")
+        # For large datasets (>50 sites), skip detailed display and go straight to download
+        if len(successful_results) > 50:
+            st.info(f"📊 Large dataset detected ({len(successful_results)} sites). Skipping detailed analysis display for performance. Download options available below.")
             
-            batch_tabs = st.tabs(["🏠 All Locations", "🔌 Power Summary", "🛣️ Road Analysis", "🚦 Traffic Summary", "🏪 Amenities Overview", "⚡ EV Competition", "🗺️ Sites Map"])
-            
-            with batch_tabs[0]:
-                st.write("**📍 Site Locations Summary**")
-                for i, site in enumerate(successful_results):
-                    with st.expander(f"📍 Site {i+1}: {site.get('formatted_address', 'Unknown Address')}"):
-                        col_a, col_b = st.columns(2)
-                        with col_a:
-                            st.write(f"**Address:** {site.get('formatted_address', 'N/A')}")
-                            st.write(f"**Postcode:** {site.get('postcode', 'N/A')}")
-                            st.write(f"**Ward:** {site.get('ward', 'N/A')}")
-                        with col_b:
-                            st.write(f"**District:** {site.get('district', 'N/A')}")
-                            st.write(f"**British Grid:** {site.get('easting', 'N/A')}, {site.get('northing', 'N/A')}")
-                            st.write(f"**Coordinates:** {site.get('latitude', 'N/A')}, {site.get('longitude', 'N/A')}")
-            
-            with batch_tabs[1]:
-                st.write("**⚡ Power Requirements Overview**")
-                total_fast = sum(r.get("fast_chargers", 0) for r in successful_results)
-                total_rapid = sum(r.get("rapid_chargers", 0) for r in successful_results)
-                total_ultra = sum(r.get("ultra_chargers", 0) for r in successful_results)
-                total_kva = sum(r.get("required_kva", 0) for r in successful_results)
+            # Show maps only
+            if successful_results:
+                st.subheader("🗺️ Site Maps")
                 
-                power_col1, power_col2 = st.columns(2)
-                with power_col1:
-                    st.write(f"**Total Fast Chargers:** {total_fast} × {fast_kw}kW")
-                    st.write(f"**Total Rapid Chargers:** {total_rapid} × {rapid_kw}kW")
-                    st.write(f"**Total Ultra Chargers:** {total_ultra} × {ultra_kw}kW")
-                with power_col2:
-                    st.write(f"**Total Required kVA:** {total_kva:.1f}")
-                    st.write(f"**Average kVA per Site:** {total_kva/len(successful_results):.1f}")
-                    st.write(f"**Total Chargers:** {total_fast + total_rapid + total_ultra}")
+                # Create two maps side by side
+                map_col1, map_col2 = st.columns(2)
                 
-                # Power breakdown by site
-                st.write("**📊 Power by Site:**")
-                for i, site in enumerate(successful_results):
-                    st.write(f"Site {i+1}: {site.get('required_kva', 'N/A')} kVA ({site.get('fast_chargers', 0)}F + {site.get('rapid_chargers', 0)}R + {site.get('ultra_chargers', 0)}U)")
+                with map_col1:
+                    st.markdown("**Sites Only Map**")
+                    st.markdown("*Pink markers: Your proposed EV sites*")
+                    sites_map = create_sites_only_map(successful_results)
+                    if sites_map:
+                        st_folium(sites_map, width=350, height=400, key="sites_only_map")
+                    else:
+                        st.error("Unable to create sites map.")
+                
+                with map_col2:
+                    st.markdown("**Sites + Competitors Map**")
+                    st.markdown("*Pink markers: Your sites | Red markers: Competitors*")
+                    full_map = create_batch_map(successful_results, show_traffic=show_traffic)
+                    if full_map:
+                        st_folium(full_map, width=350, height=400, key="full_batch_map")
+                    else:
+                        st.error("Unable to create full map.")
+        
+        else:
+            # For smaller datasets, show full detailed interface
+            if successful_results:
+                st.subheader("📋 Detailed Batch Analysis")
+                
+                batch_tabs = st.tabs(["🏠 All Locations", "🔌 Power Summary", "🛣️ Road Analysis", "🚦 Traffic Summary", "🏪 Amenities Overview", "⚡ EV Competition", "🗺️ Sites Only", "🗺️ Sites + Competitors"])
+                
+                with batch_tabs[0]:
+                    st.write("**📍 Site Locations Summary**")
+                    for i, site in enumerate(successful_results):
+                        with st.expander(f"📍 Site {i+1}: {site.get('formatted_address', 'Unknown Address')}"):
+                            col_a, col_b = st.columns(2)
+                            with col_a:
+                                st.write(f"**Address:** {site.get('formatted_address', 'N/A')}")
+                                st.write(f"**Postcode:** {site.get('postcode', 'N/A')}")
+                                st.write(f"**Ward:** {site.get('ward', 'N/A')}")
+                            with col_b:
+                                st.write(f"**District:** {site.get('district', 'N/A')}")
+                                st.write(f"**British Grid:** {site.get('easting', 'N/A')}, {site.get('northing', 'N/A')}")
+                                st.write(f"**Coordinates:** {site.get('latitude', 'N/A')}, {site.get('longitude', 'N/A')}")
+                
+                with batch_tabs[1]:
+                    st.write("**⚡ Power Requirements Overview**")
+                    total_fast = sum(r.get("fast_chargers", 0) for r in successful_results)
+                    total_rapid = sum(r.get("rapid_chargers", 0) for r in successful_results)
+                    total_ultra = sum(r.get("ultra_chargers", 0) for r in successful_results)
+                    total_kva = sum(r.get("required_kva", 0) for r in successful_results)
+                    
+                    power_col1, power_col2 = st.columns(2)
+                    with power_col1:
+                        st.write(f"**Total Fast Chargers:** {total_fast} × {fast_kw}kW")
+                        st.write(f"**Total Rapid Chargers:** {total_rapid} × {rapid_kw}kW")
+                        st.write(f"**Total Ultra Chargers:** {total_ultra} × {ultra_kw}kW")
+                    with power_col2:
+                        st.write(f"**Total Required kVA:** {total_kva:.1f}")
+                        st.write(f"**Average kVA per Site:** {total_kva/len(successful_results):.1f}")
+                        st.write(f"**Total Chargers:** {total_fast + total_rapid + total_ultra}")
+                    
+                    # Power breakdown by site
+                    st.write("**📊 Power by Site:**")
+                    for i, site in enumerate(successful_results):
+                        st.write(f"Site {i+1}: {site.get('required_kva', 'N/A')} kVA ({site.get('fast_chargers', 0)}F + {site.get('rapid_chargers', 0)}R + {site.get('ultra_chargers', 0)}U)")
+                
+                with batch_tabs[2]:
+                    st.write("**🛣️ Road Information Analysis**")
+                    road_types = {}
+                    for site in successful_results:
+                        road_type = site.get('snapped_road_type', 'Unknown')
+                        road_types[road_type] = road_types.get(road_type, 0) + 1
+                    
+                    road_col1, road_col2 = st.columns(2)
+                    with road_col1:
+                        st.write("**Road Type Distribution:**")
+                        for road_type, count in road_types.items():
+                            percentage = (count / len(successful_results)) * 100
+                            st.write(f"• {road_type}: {count} sites ({percentage:.1f}%)")
+                    
+                    with road_col2:
+                        st.write("**Road Details by Site:**")
+                        for i, site in enumerate(successful_results):
+                            st.write(f"**Site {i+1}:** {site.get('snapped_road_name', 'Unknown')} ({site.get('snapped_road_type', 'Unknown')})")
+                
+                with batch_tabs[3]:
+                    st.write("**🚦 Traffic Analysis Summary**")
+                    traffic_levels = {"Low": 0, "Medium": 0, "High": 0, "N/A": 0}
+                    for site in successful_results:
+                        level = site.get('traffic_congestion', 'N/A')
+                        traffic_levels[level] = traffic_levels.get(level, 0) + 1
+                    
+                    traffic_col1, traffic_col2 = st.columns(2)
+                    with traffic_col1:
+                        st.write("**Traffic Congestion Levels:**")
+                        for level, count in traffic_levels.items():
+                            if count > 0:
+                                percentage = (count / len(successful_results)) * 100
+                                st.write(f"• {level}: {count} sites ({percentage:.1f}%)")
+                    
+                    with traffic_col2:
+                        st.write("**Traffic by Site:**")
+                        for i, site in enumerate(successful_results):
+                            traffic = site.get('traffic_congestion', 'N/A')
+                            speed = site.get('traffic_speed', 'N/A')
+                            st.write(f"**Site {i+1}:** {traffic} congestion" + (f" ({speed} mph)" if speed != 'N/A' and speed else ""))
+                
+                with batch_tabs[4]:
+                    st.write("**🏪 Amenities Overview**")
+                    st.write("**Nearby Amenities by Site:**")
+                    for i, site in enumerate(successful_results):
+                        with st.expander(f"🏪 Site {i+1} Amenities"):
+                            amenities = site.get('amenities', 'None')
+                            if amenities and amenities != 'None':
+                                amenity_list = amenities.split(';')
+                                for amenity in amenity_list[:10]:  # Show first 10
+                                    st.write(f"• {amenity.strip()}")
+                            else:
+                                st.write("No nearby amenities found")
+                
+                with batch_tabs[5]:
+                    # EV Competition Analysis
+                    st.write("**⚡ EV Competition Analysis**")
+                    
+                    # Competition overview
+                    comp_col1, comp_col2, comp_col3 = st.columns(3)
+                    
+                    total_competitors = sum(r.get("competitor_ev_count", 0) for r in successful_results)
+                    sites_with_competitors = sum(1 for r in successful_results if r.get("competitor_ev_count", 0) > 0)
+                    max_competitors_site = max(successful_results, key=lambda x: x.get("competitor_ev_count", 0))
+                    max_competitors = max_competitors_site.get("competitor_ev_count", 0)
+                    
+                    with comp_col1:
+                        st.metric("Total Competitors Found", total_competitors)
+                    with comp_col2:
+                        st.metric("Sites with Competitors", sites_with_competitors)
+                    with comp_col3:
+                        st.metric("Max Competitors (Single Site)", max_competitors)
+                    
+                    # Market share analysis with pie chart
+                    if total_competitors > 0:
+                        st.write("**📊 Overall Market Share Analysis**")
+                        
+                        all_competitors = {}
+                        for result in successful_results:
+                            ev_stations = result.get('ev_stations_details', [])
+                            if isinstance(ev_stations, list):
+                                for station in ev_stations:
+                                    if isinstance(station, dict):
+                                        name = station.get('name', 'Unknown')
+                                        brand = extract_brand_name(name)
+                                        all_competitors[brand] = all_competitors.get(brand, 0) + 1
+                        
+                        if all_competitors:
+                            # Create market share chart
+                            brands = list(all_competitors.keys())
+                            counts = list(all_competitors.values())
+                            
+                            df_market = pd.DataFrame({
+                                'Brand': brands,
+                                'Total Stations': counts
+                            }).sort_values('Total Stations', ascending=False)
+                            
+                            # Progress bars for each brand
+                            total_stations = sum(counts)
+                            st.write("**Market Share Distribution:**")
+                            for _, row in df_market.iterrows():
+                                brand, count = row['Brand'], row['Total Stations']
+                                percentage = (count / total_stations) * 100
+                                st.write(f"**{brand}**: {count} stations ({percentage:.1f}%)")
+                                st.progress(percentage / 100)
+                            
+                            # Pie chart
+                            st.write("**Visual Breakdown:**")
+                            try:
+                                pie_chart_img = create_pie_chart_data(all_competitors)
+                                if pie_chart_img:
+                                    st.markdown(f'<img src="data:image/png;base64,{pie_chart_img}" style="width:100%">', unsafe_allow_html=True)
+                                else:
+                                    # Fallback to bar chart
+                                    st.bar_chart(df_market.set_index('Brand'), use_container_width=True)
+                            except Exception as e:
+                                st.warning(f"Could not create pie chart: {e}")
+                                # Fallback to bar chart
+                                st.bar_chart(df_market.set_index('Brand'), use_container_width=True)
+                    
+                    # Competition by site
+                    st.write("**🏢 Competition by Site:**")
+                    for i, site in enumerate(successful_results):
+                        comp_count = site.get("competitor_ev_count", 0)
+                        comp_names = site.get("competitor_ev_names", "None")
+                        if comp_count > 0:
+                            with st.expander(f"⚡ Site {i+1}: {comp_count} competitors"):
+                                st.write(f"**Competitors:** {comp_names}")
+                        else:
+                            st.write(f"**Site {i+1}:** No competitors nearby")
+                
+                with batch_tabs[6]:
+                    # Sites only map
+                    st.markdown("*Pink markers: Your proposed EV sites*")
+                    sites_map = create_sites_only_map(successful_results)
+                    if sites_map:
+                        st_folium(sites_map, width=700, height=500, key="batch_sites_only")
+                    else:
+                        st.error("Unable to create sites map.")
+                
+                with batch_tabs[7]:
+                    # Sites + competitors map
+                    st.markdown("*Pink markers: Your proposed EV sites | Red markers: Competitor EV stations*")
+                    batch_map = create_batch_map(successful_results, show_traffic=show_traffic)
+                    if batch_map:
+                        st_folium(batch_map, width=700, height=500, key="batch_full_map")
+                    else:
+                        st.error("Unable to create map - no valid sites found.")VA ({site.get('fast_chargers', 0)}F + {site.get('rapid_chargers', 0)}R + {site.get('ultra_chargers', 0)}U)")
             
             with batch_tabs[2]:
                 st.write("**🛣️ Road Information Analysis**")
