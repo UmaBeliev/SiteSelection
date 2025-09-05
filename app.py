@@ -1196,8 +1196,8 @@ with tab2:
         else:
             st.error("Unable to create map - no valid sites found.")
         
-        # Download results
-        csv_data = df_out.to_csv(index=False)
+        # Download results - use cleaned dataframe
+        csv_data = df_display.to_csv(index=False)
         st.download_button(
             label="📥 Download Results CSV",
             data=csv_data,
