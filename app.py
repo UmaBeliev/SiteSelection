@@ -1035,7 +1035,19 @@ with tab2:
             df = pd.read_csv(uploaded)
             
             st.subheader("📊 Data Preview")
-            st.dataframe(df.head())
+            # Show only first few rows as text instead of dataframe
+            st.write("**File Structure:**")
+            st.write(f"Rows: {len(df)}, Columns: {len(df.columns)}")
+            st.write(f"Columns: {', '.join(df.columns.tolist())}")
+            
+            # Show sample data as text
+            if len(df) > 0:
+                st.write("**Sample Data (First 3 rows):**")
+                for i in range(min(3, len(df))):
+                    row_data = []
+                    for col in df.columns:
+                        row_data.append(f"{col}: {df.iloc[i][col]}")
+                    st.write(f"Row {i+1}: {' | '.join(row_data[:5])}")  # Show first 5 columns
             
             # Check required columns
             required_cols = {"latitude", "longitude", "fast", "rapid", "ultra"}
