@@ -1337,7 +1337,123 @@ with tab2:
                     if batch_map:
                         st_folium(batch_map, width=700, height=500, key="batch_full_map")
                     else:
-                        st.error("Unable to create map - no valid sites found.")VA ({site.get('fast_chargers', 0)}F + {site.get('rapid_chargers', 0)}R + {site.get('ultra_chargers', 0)}U)")
+                        st.error("Unable to create map - no valid sites found.")
+        
+        # Show failed results if any
+        if failed_results:
+            st.subheader("⚠️ Failed Sites")
+            for i, failed in enumerate(failed_results):
+                st.write(f"**Site {i+1}:** {failed.get('latitude', 'N/A')}, {failed.get('longitude', 'N/A')} - {failed.get('error', 'Unknown error')}")
+        
+        # Download section - always available
+        if successful_results:
+            st.subheader("📥 Download Results")
+            
+            # Create a simple, clean dataframe for download
+            download_data = []
+            for i, site in enumerate(successful_results):
+                try:
+                    download_data.append({
+                        'Site_Number': i + 1,
+                        'Latitude': site.get('latitude', ''),
+                        'Longitude': site.get('longitude', ''),
+                        'Address': str(site.get('formatted_address', '')),
+                        'Postcode': str(site.get('postcode', '')),
+                        'Ward': str(site.get('ward', '')),
+                        'District': str(site.get('district', '')),
+                        'Fast_Chargers': int(site.get('fast_chargers', 0)),
+                        'Rapid_Chargers': int(site.get('rapid_chargers', 0)),
+                        'Ultra_Chargers': int(site.get('ultra_chargers', 0)),
+                        'Required_kVA': float(site.get('required_kva', 0)),
+                        'Snapped_Road_Name': str(site.get('snapped_road_name', '')),
+                        'Snapped_Road_Type': str(site.get('snapped_road_type', '')),
+                        'Nearest_Road_Name': str(site.get('nearest_road_name', '')),
+                        'Nearest_Road_Type': str(site.get('nearest_road_type', '')),
+                        'Traffic_Congestion': str(site.get('traffic_congestion', '')),
+                        'Traffic_Speed_mph': str(site.get('traffic_speed', '')),
+                        'Competitor_EV_Count': int(site.get('competitor_ev_count', 0)),
+                        'Competitor_EV_Names': str(site.get('competitor_ev_names', '')),
+                        'Amenities': str(site.get('amenities', '')),
+                        'British_Grid_Easting': str(site.get('easting', '')),
+                        'British_Grid_Northing': str(site.get('northing', ''))
+                    })
+                except Exception as e:
+                    st.warning(f"Error preparing site {i+1} for download: {e}")
+                    # Add basic data even if some fields fail
+                    download_data.append({
+                        'Site_Number': i + 1,
+                        'Latitude': site.get('latitude', ''),
+                        'Longitude': site.get('longitude', ''),
+                        'Address': 'Error processing data',
+                        'Error': str(e)
+                    })
+            
+            try:
+                df_download = pd.DataFrame(download_data)
+                csv_data = df_download.to_csv(index=False)
+                
+                # Show download info
+                st.write(f"**Download includes {len(download_data)} sites with {len(df_download.columns)} data columns**")
+                
+                st.download_button(
+                    label="📥 Download Complete Analysis CSV",
+                    data=csv_data,
+                    file_name=f"ev_site_batch_analysis_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    key="download_csv_batch"
+                )
+                
+                # Also offer a simplified version
+                simplified_data = []
+                for i, site in enumerate(successful_results):
+                    simplified_data.append({
+                        'Site': i + 1,
+                        'Lat': site.get('latitude', ''),
+                        'Lon': site.get('longitude', ''),
+                        'Address': str(site.get('formatted_address', ''))[:100],  # Truncate long addresses
+                        'kVA': site.get('required_kva', 0),
+                        'Road_Type': str(site.get('snapped_road_type', '')),
+                        'Traffic': str(site.get('traffic_congestion', '')),
+                        'Competitors': site.get('competitor_ev_count', 0)
+                    })
+                
+                df_simple = pd.DataFrame(simplified_data)
+                csv_simple = df_simple.to_csv(index=False)
+                
+                st.download_button(
+                    label="📥 Download Summary CSV (Essential Data Only)",
+                    data=csv_simple,
+                    file_name=f"ev_site_summary_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    key="download_simple_batch"
+                )
+                
+            except Exception as e:
+                st.error(f"Error creating CSV download: {e}")
+                st.write("**Debug info:**")
+                st.write(f"Number of successful results: {len(successful_results)}")
+                if successful_results:
+                    st.write("Sample data structure:")
+                    sample_keys = list(successful_results[0].keys())[:10]
+                    st.write(f"Sample keys: {sample_keys}")
+        else:
+            st.info("No successful results to download.")
+    
+    else:
+        st.info("👆 Upload a CSV file to start batch processing.")
+
+# Footer
+st.markdown("---")
+st.markdown(
+    """
+    <div style='text-align: center; color: #666;'>
+        <p>🔋 EV Charger Site Generator v3.0 | Built with Streamlit</p>
+        <p>Powered by Google Maps API (Roads, Places, Geocoding), TomTom Traffic API, and Postcodes.io</p>
+        <p>✨ Now with EV competitor analysis and enhanced road information</p>
+    </div>
+    """, 
+    unsafe_allow_html=True
+)
             
             with batch_tabs[2]:
                 st.write("**🛣️ Road Information Analysis**")
