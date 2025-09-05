@@ -17,6 +17,53 @@ TOMTOM_API_KEY = st.secrets.get("tomtom_api_key", "")
 # UTILITY FUNCTIONS
 # ==============================
 
+def extract_brand_name(station_name):
+    """Extract brand name from station name"""
+    if not station_name or station_name == "Unknown":
+        return "Unknown"
+    
+    # Common EV charging brands
+    brands = {
+        'tesla': 'Tesla',
+        'supercharger': 'Tesla',
+        'chargepoint': 'ChargePoint',
+        'ionity': 'Ionity',
+        'pod point': 'Pod Point',
+        'podpoint': 'Pod Point',
+        'ecotricity': 'Ecotricity',
+        'bp pulse': 'BP Pulse',
+        'bp': 'BP Pulse',
+        'shell': 'Shell Recharge',
+        'gridserve': 'Gridserve',
+        'instavolt': 'InstaVolt',
+        'osprey': 'Osprey Charging',
+        'charge your car': 'Charge Your Car',
+        'rolec': 'Rolec',
+        'chargemaster': 'Chargemaster',
+        'polar': 'Polar Network',
+        'source london': 'Source London',
+        'ev-box': 'EVBox',
+        'fastned': 'Fastned',
+        'mer': 'MER',
+        'newmotion': 'NewMotion'
+    }
+    
+    name_lower = station_name.lower()
+    
+    # Check for brand matches
+    for brand_key, brand_name in brands.items():
+        if brand_key in name_lower:
+            return brand_name
+    
+    # If no known brand found, try to extract first word(s)
+    words = station_name.split()
+    if len(words) >= 2:
+        return f"{words[0]} {words[1]}"
+    elif len(words) == 1:
+        return words[0]
+    
+    return "Other"
+
 @st.cache_data
 def get_postcode_info(lat, lon):
     """Get postcode information using postcodes.io API"""
@@ -122,10 +169,20 @@ def get_ev_charging_stations(lat, lon, radius=1000):
                 ev_keywords = ["electric", "ev", "charging", "tesla", "chargepoint", "ionity", "pod point", "ecotricity"]
                 
                 if any(keyword in name for keyword in ev_keywords) or "electric_vehicle_charging_station" in types:
-                    unique_places[place_id] = place
+                    # Get basic location from the search result
+                    geometry = place.get("geometry", {})
+                    location = geometry.get("location", {})
+                    
+                    unique_places[place_id] = {
+                        "place_id": place_id,
+                        "name": place.get("name", "Unknown"),
+                        "latitude": location.get("lat"),
+                        "longitude": location.get("lng"),
+                        "geometry": geometry
+                    }
         
         # Get detailed information for each EV station
-        for place_id, place in unique_places.items():
+        for place_id, basic_info in unique_places.items():
             try:
                 # Get place details including photos
                 details_url = "https://maps.googleapis.com/maps/api/place/details/json"
@@ -149,22 +206,34 @@ def get_ev_charging_stations(lat, lon, radius=1000):
                             if photo_reference:
                                 photo_url = f"https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference={photo_reference}&key={GOOGLE_API_KEY}"
                         
+                        # Get geometry for map markers
+                        geometry = result.get("geometry", basic_info.get("geometry", {}))
+                        location = geometry.get("location", {})
+                        
                         ev_station = {
-                            "name": result.get("name", "Unknown"),
+                            "name": result.get("name", basic_info.get("name", "Unknown")),
                             "rating": result.get("rating", "N/A"),
                             "address": result.get("formatted_address", "N/A"),
                             "photo_url": photo_url,
                             "phone": result.get("formatted_phone_number", "N/A"),
                             "types": result.get("types", []),
-                            "place_id": place_id
+                            "place_id": place_id,
+                            "latitude": location.get("lat", basic_info.get("latitude")),
+                            "longitude": location.get("lng", basic_info.get("longitude")),
+                            "geometry": geometry
                         }
                         
-                        ev_stations.append(ev_station)
+                        # Only add if we have valid coordinates
+                        if ev_station["latitude"] and ev_station["longitude"]:
+                            ev_stations.append(ev_station)
                 
                 time.sleep(0.1)
                 
             except Exception as e:
                 st.warning(f"Error getting EV station details: {e}")
+                # Add basic info if details fail
+                if basic_info.get("latitude") and basic_info.get("longitude"):
+                    ev_stations.append(basic_info)
     
     except Exception as e:
         st.warning(f"Error searching for EV stations: {e}")
@@ -628,12 +697,11 @@ def create_single_map(site, show_traffic=False):
     ev_stations = site.get('ev_stations_details', [])
     for i, station in enumerate(ev_stations):
         try:
-            # Use the geometry if available, otherwise skip
-            geometry = station.get('geometry')
-            if geometry and geometry.get('location'):
-                ev_lat = geometry['location']['lat']
-                ev_lng = geometry['location']['lng']
-                
+            # Get coordinates from the station data
+            station_lat = station.get('latitude')
+            station_lng = station.get('longitude')
+            
+            if station_lat and station_lng:
                 ev_popup = f"""
                 <b>⚡ {station.get('name', 'Unknown EV Station')}</b><br>
                 <b>Rating:</b> {station.get('rating', 'N/A')}<br>
@@ -642,12 +710,13 @@ def create_single_map(site, show_traffic=False):
                 """
                 
                 folium.Marker(
-                    [ev_lat, ev_lng],
+                    [station_lat, station_lng],
                     popup=folium.Popup(ev_popup, max_width=300),
                     tooltip=f"⚡ Competitor: {station.get('name', 'EV Station')}",
                     icon=folium.Icon(color="red", icon="flash", prefix="fa")
                 ).add_to(m)
-        except:
+        except Exception as e:
+            st.warning(f"Error adding EV station marker: {e}")
             continue
     
     if show_traffic:
@@ -676,7 +745,7 @@ def create_batch_map(sites, show_traffic=False):
         attr="Google Maps"
     )
     
-    # Use pink color for all site markers
+    # Add your proposed sites (pink markers)
     for i, site in enumerate(valid_sites):
         popup_content = f"""
         <b>📍 Site {i+1}:</b> {site.get('formatted_address','Unknown Address')}<br>
@@ -694,6 +763,31 @@ def create_batch_map(sites, show_traffic=False):
             tooltip=f"🔋 EV Site {i+1}",
             icon=folium.Icon(color="pink", icon="bolt", prefix="fa")
         ).add_to(m)
+        
+        # Add EV competitor markers for this site
+        ev_stations = site.get('ev_stations_details', [])
+        for j, station in enumerate(ev_stations):
+            try:
+                station_lat = station.get('latitude')
+                station_lng = station.get('longitude')
+                
+                if station_lat and station_lng:
+                    ev_popup = f"""
+                    <b>⚡ {station.get('name', 'Unknown EV Station')}</b><br>
+                    <b>Near Site:</b> {i+1}<br>
+                    <b>Rating:</b> {station.get('rating', 'N/A')}<br>
+                    <b>Address:</b> {station.get('address', 'N/A')}<br>
+                    <b>Phone:</b> {station.get('phone', 'N/A')}
+                    """
+                    
+                    folium.Marker(
+                        [station_lat, station_lng],
+                        popup=folium.Popup(ev_popup, max_width=300),
+                        tooltip=f"⚡ Competitor: {station.get('name', 'EV Station')}",
+                        icon=folium.Icon(color="red", icon="flash", prefix="fa")
+                    ).add_to(m)
+            except Exception as e:
+                continue
     
     if show_traffic:
         add_google_traffic_layer(m)
@@ -766,13 +860,13 @@ with tab1:
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            st.metric("Required kVA", site["required_kva"])
+            st.metric("Required kVA", site.get("required_kva", "N/A"))
         with col2:
-            st.metric("Snapped Road Type", site["snapped_road_type"])
+            st.metric("Snapped Road Type", site.get("snapped_road_type", "Unknown"))
         with col3:
-            st.metric("Traffic Level", site["traffic_congestion"])
+            st.metric("Traffic Level", site.get("traffic_congestion", "N/A"))
         with col4:
-            ev_count = site["competitor_ev_count"]
+            ev_count = site.get("competitor_ev_count", 0)
             st.metric("Competitor EVs", ev_count)
         
         # Detailed information
@@ -781,38 +875,38 @@ with tab1:
         detail_tabs = st.tabs(["🏠 Location", "🔌 Power", "🛣️ Road Info", "🚦 Traffic", "🏪 Amenities", "⚡ EV Competitors"])
         
         with detail_tabs[0]:
-            st.write(f"**Address:** {site['formatted_address']}")
-            st.write(f"**Postcode:** {site['postcode']}")
-            st.write(f"**Ward:** {site['ward']}")
-            st.write(f"**District:** {site['district']}")
-            st.write(f"**British Grid:** {site['easting']}, {site['northing']}")
+            st.write(f"**Address:** {site.get('formatted_address', 'N/A')}")
+            st.write(f"**Postcode:** {site.get('postcode', 'N/A')}")
+            st.write(f"**Ward:** {site.get('ward', 'N/A')}")
+            st.write(f"**District:** {site.get('district', 'N/A')}")
+            st.write(f"**British Grid:** {site.get('easting', 'N/A')}, {site.get('northing', 'N/A')}")
         
         with detail_tabs[1]:
-            st.write(f"**Fast Chargers:** {site['fast_chargers']} × {fast_kw}kW")
-            st.write(f"**Rapid Chargers:** {site['rapid_chargers']} × {rapid_kw}kW")
-            st.write(f"**Ultra Chargers:** {site['ultra_chargers']} × {ultra_kw}kW")
-            st.write(f"**Total Required kVA:** {site['required_kva']}")
+            st.write(f"**Fast Chargers:** {site.get('fast_chargers', 0)} × {fast_kw}kW")
+            st.write(f"**Rapid Chargers:** {site.get('rapid_chargers', 0)} × {rapid_kw}kW")
+            st.write(f"**Ultra Chargers:** {site.get('ultra_chargers', 0)} × {ultra_kw}kW")
+            st.write(f"**Total Required kVA:** {site.get('required_kva', 'N/A')}")
         
         with detail_tabs[2]:
-            st.write(f"**Snapped Road Name:** {site['snapped_road_name']}")
-            st.write(f"**Snapped Road Type:** {site['snapped_road_type']}")
-            st.write(f"**Nearest Road Name:** {site['nearest_road_name']}")
-            st.write(f"**Nearest Road Type:** {site['nearest_road_type']}")
+            st.write(f"**Snapped Road Name:** {site.get('snapped_road_name', 'Unknown')}")
+            st.write(f"**Snapped Road Type:** {site.get('snapped_road_type', 'Unknown')}")
+            st.write(f"**Nearest Road Name:** {site.get('nearest_road_name', 'Unknown')}")
+            st.write(f"**Nearest Road Type:** {site.get('nearest_road_type', 'Unknown')}")
             if site.get('place_id'):
                 st.write(f"**Google Place ID:** {site['place_id']}")
         
         with detail_tabs[3]:
-            st.write(f"**Congestion Level:** {site['traffic_congestion']}")
-            if site['traffic_speed']:
+            st.write(f"**Congestion Level:** {site.get('traffic_congestion', 'N/A')}")
+            if site.get('traffic_speed'):
                 st.write(f"**Current Speed:** {site['traffic_speed']} mph")
                 st.write(f"**Free Flow Speed:** {site['traffic_freeflow']} mph")
         
         with detail_tabs[4]:
-            st.write(f"**Nearby Amenities:** {site['amenities']}")
+            st.write(f"**Nearby Amenities:** {site.get('amenities', 'N/A')}")
         
         with detail_tabs[5]:
-            st.write(f"**Number of Competitor EV Stations:** {site['competitor_ev_count']}")
-            st.write(f"**Competitor Names:** {site['competitor_ev_names']}")
+            st.write(f"**Number of Competitor EV Stations:** {site.get('competitor_ev_count', 0)}")
+            st.write(f"**Competitor Names:** {site.get('competitor_ev_names', 'None')}")
             
             # Display detailed EV station information
             ev_stations = site.get('ev_stations_details', [])
@@ -826,13 +920,52 @@ with tab1:
                             st.write(f"**Address:** {station.get('address', 'N/A')}")
                             st.write(f"**Phone:** {station.get('phone', 'N/A')}")
                             st.write(f"**Place ID:** {station.get('place_id', 'N/A')}")
+                            st.write(f"**Coordinates:** {station.get('latitude', 'N/A')}, {station.get('longitude', 'N/A')}")
                         with col_b:
                             if station.get('photo_url'):
-                                st.image(station['photo_url'], caption=station.get('name', 'EV Station'), width=200)
+                                try:
+                                    st.image(station['photo_url'], caption=station.get('name', 'EV Station'), width=200)
+                                except:
+                                    st.write("📷 Photo unavailable")
                             else:
                                 st.write("📷 No photo available")
             else:
                 st.info("No competitor EV charging stations found nearby.")
+        
+        # EV Competitor Market Share Analysis
+        ev_stations = site.get('ev_stations_details', [])
+        if ev_stations:
+            st.subheader("📊 Competitor Market Share Analysis")
+            
+            # Extract brand/company names from station names
+            competitor_brands = {}
+            for station in ev_stations:
+                name = station.get('name', 'Unknown')
+                # Extract brand name (simple heuristic)
+                brand = extract_brand_name(name)
+                competitor_brands[brand] = competitor_brands.get(brand, 0) + 1
+            
+            # Create bar chart
+            if competitor_brands:
+                brands = list(competitor_brands.keys())
+                counts = list(competitor_brands.values())
+                
+                # Create DataFrame for chart
+                df_chart = pd.DataFrame({
+                    'Brand': brands,
+                    'Number of Stations': counts
+                })
+                
+                # Sort by count
+                df_chart = df_chart.sort_values('Number of Stations', ascending=False)
+                
+                st.bar_chart(df_chart.set_index('Brand'), use_container_width=True)
+                
+                # Show top competitors
+                st.write("**Top Competitors:**")
+                for i, (brand, count) in enumerate(df_chart.values):
+                    percentage = (count / len(ev_stations)) * 100
+                    st.write(f"{i+1}. **{brand}**: {count} stations ({percentage:.1f}%)")
         
         # Map
         st.subheader("🗺️ Site Map")
@@ -927,11 +1060,15 @@ with tab2:
             if "required_kva" in df_out.columns:
                 avg_kva = df_out["required_kva"].mean()
                 st.metric("Avg kVA", f"{avg_kva:.1f}" if not pd.isna(avg_kva) else "N/A")
+            else:
+                st.metric("Avg kVA", "N/A")
         
         with col4:
             if "competitor_ev_count" in df_out.columns:
                 avg_competitors = df_out["competitor_ev_count"].mean()
                 st.metric("Avg Competitors", f"{avg_competitors:.1f}" if not pd.isna(avg_competitors) else "N/A")
+            else:
+                st.metric("Avg Competitors", "N/A")
         
         # Additional EV insights
         if "competitor_ev_count" in df_out.columns:
@@ -949,6 +1086,58 @@ with tab2:
             with col_ev3:
                 max_competitors = df_out["competitor_ev_count"].max()
                 st.metric("Max Competitors (Single Site)", int(max_competitors) if not pd.isna(max_competitors) else 0)
+            
+            # Overall Market Share Analysis for all sites
+            if total_competitors > 0:
+                st.subheader("📊 Overall Competitor Market Share Analysis")
+                
+                all_competitors = {}
+                for idx, row in df_out.iterrows():
+                    ev_stations = row.get('ev_stations_details', [])
+                    if isinstance(ev_stations, list):
+                        for station in ev_stations:
+                            if isinstance(station, dict):
+                                name = station.get('name', 'Unknown')
+                                brand = extract_brand_name(name)
+                                all_competitors[brand] = all_competitors.get(brand, 0) + 1
+                
+                if all_competitors:
+                    # Create comprehensive market share chart
+                    brands = list(all_competitors.keys())
+                    counts = list(all_competitors.values())
+                    
+                    df_market = pd.DataFrame({
+                        'Brand': brands,
+                        'Total Stations': counts
+                    })
+                    
+                    df_market = df_market.sort_values('Total Stations', ascending=False)
+                    
+                    # Bar chart
+                    st.bar_chart(df_market.set_index('Brand'), use_container_width=True)
+                    
+                    # Market share table
+                    col_table1, col_table2 = st.columns(2)
+                    
+                    with col_table1:
+                        st.write("**Market Share by Brand:**")
+                        total_stations = sum(counts)
+                        for brand, count in df_market.values:
+                            percentage = (count / total_stations) * 100
+                            st.write(f"• **{brand}**: {count} stations ({percentage:.1f}%)")
+                    
+                    with col_table2:
+                        # Competition intensity by site
+                        st.write("**Sites by Competition Level:**")
+                        no_competition = (df_out["competitor_ev_count"] == 0).sum()
+                        low_competition = ((df_out["competitor_ev_count"] >= 1) & (df_out["competitor_ev_count"] <= 3)).sum()
+                        medium_competition = ((df_out["competitor_ev_count"] >= 4) & (df_out["competitor_ev_count"] <= 7)).sum()
+                        high_competition = (df_out["competitor_ev_count"] >= 8).sum()
+                        
+                        st.write(f"• **No Competition**: {no_competition} sites")
+                        st.write(f"• **Low Competition (1-3)**: {low_competition} sites")
+                        st.write(f"• **Medium Competition (4-7)**: {medium_competition} sites")
+                        st.write(f"• **High Competition (8+)**: {high_competition} sites")
         
         # Results table
         st.dataframe(df_out, use_container_width=True)
