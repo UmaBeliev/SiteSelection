@@ -955,7 +955,7 @@ with tab2:
         
         # Map
         st.subheader("🗺️ Sites Map")
-        st.markdown("*All markers are pink representing your proposed EV charging sites*")
+        st.markdown("*Pink markers: Your proposed EV sites | Red markers: Competitor EV stations*")
         batch_map = create_batch_map(results, show_traffic=show_traffic)
         if batch_map:
             st_folium(batch_map, width=700, height=500)
