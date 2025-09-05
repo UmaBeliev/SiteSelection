@@ -29,39 +29,36 @@ def get_postcode_info(lat: float, lon: float):
     return "N/A", "N/A", "N/A"
 
 @st.cache_data
-def get_street_name(lat: float, lon: float, debug=False) -> str:
+def get_geocode_details(lat: float, lon: float, debug=False) -> dict:
+    """Get enriched location details from Google Geocoding API"""
     try:
         url = "https://maps.googleapis.com/maps/api/geocode/json"
-        params = {"latlng": f"{lat},{lon}", "key": GOOGLE_API_KEY, "result_type": "street_address|route|premise"}
+        params = {"latlng": f"{lat},{lon}", "key": GOOGLE_API_KEY}
         response = requests.get(url, params=params, timeout=10)
         data = response.json()
         if debug:
             st.write(f"Google API Response: {data}")
 
-        if data.get("status") == "OK":
-            results = data.get("results", [])
-            if results:
-                for result in results:
-                    comps = result.get("address_components", [])
-                    street, number = None, None
-                    for c in comps:
-                        if "route" in c.get("types", []):
-                            street = c["long_name"]
-                        elif "street_number" in c.get("types", []):
-                            number = c["long_name"]
-                    if street:
-                        return f"{number} {street}" if number else street
-            return results[0].get("formatted_address", "Unknown")
-        elif data.get("status") == "OVER_QUERY_LIMIT":
-            return "Quota exceeded"
-        elif data.get("status") == "REQUEST_DENIED":
-            return "API denied"
-        elif data.get("status") == "ZERO_RESULTS":
-            return "No address found"
+        if data.get("status") == "OK" and data.get("results"):
+            comps = data["results"][0].get("address_components", [])
+            details = {}
+            for c in comps:
+                types = c.get("types", [])
+                if "route" in types: details["street"] = c["long_name"]
+                if "street_number" in types: details["street_number"] = c["long_name"]
+                if "neighborhood" in types: details["neighborhood"] = c["long_name"]
+                if "locality" in types: details["city"] = c["long_name"]
+                if "administrative_area_level_2" in types: details["county"] = c["long_name"]
+                if "administrative_area_level_1" in types: details["region"] = c["long_name"]
+                if "postal_code" in types: details["postcode"] = c["long_name"]
+                if "country" in types: details["country"] = c["long_name"]
+
+            details["formatted_address"] = data["results"][0].get("formatted_address")
+            return details
         else:
-            return f"API Error: {data.get('status')}"
+            return {"error": f"API status: {data.get('status')}"}
     except Exception as e:
-        return f"Error: {e}"
+        return {"error": str(e)}
 
 def get_tomtom_traffic(lat, lon, api_key):
     try:
@@ -80,35 +77,6 @@ def get_tomtom_traffic(lat, lon, api_key):
         return {"speed": None, "freeFlow": None, "congestion": "Unknown"}
     except Exception as e:
         return {"speed": None, "freeFlow": None, "congestion": f"Error: {e}"}
-
-def get_osm_road_width(lat, lon, radius=50):
-    try:
-        query = f"""
-        [out:json];
-        way(around:{radius},{lat},{lon})[highway];
-        out tags;
-        """
-        url = "https://overpass-api.de/api/interpreter"
-        r = requests.get(url, params={"data": query}, timeout=15)
-        if r.status_code == 200:
-            for el in r.json().get("elements", []):
-                tags = el.get("tags", {})
-                if "width" in tags:
-                    return tags["width"]
-                elif "lanes" in tags:
-                    # approximate width if lanes are known
-                    try:
-                        lanes = int(tags["lanes"])
-                        return str(lanes * 3.5)  # assume 3.5 m per lane
-                    except:
-                        pass
-                elif "sidewalk:width" in tags:
-                    return tags["sidewalk:width"]
-        return "Unknown"
-    except Exception as e:
-        return f"Error: {e}"
-
-
 
 def get_osm_amenities(lat, lon, radius=100):
     try:
@@ -144,19 +112,23 @@ def calculate_kva(fast, rapid, ultra, fast_kw=22, rapid_kw=60, ultra_kw=150):
 def process_site(lat, lon, fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw, debug=False):
     easting, northing = convert_to_british_grid(lat, lon)
     postcode, ward, district = get_postcode_info(lat, lon)
-    street = get_street_name(lat, lon, debug)
+    geo = get_geocode_details(lat, lon, debug)
     kva = calculate_kva(fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw)
     traffic = get_tomtom_traffic(lat, lon, TOMTOM_API_KEY) if TOMTOM_API_KEY else {"speed": None, "freeFlow": None, "congestion": "N/A"}
-    road_width = get_osm_road_width(lat, lon)
     amenities = get_osm_amenities(lat, lon)
     return {
         "latitude": lat, "longitude": lon,
         "easting": easting, "northing": northing,
-        "postcode": postcode, "ward": ward, "district": district, "street": street,
+        "postcode": postcode, "ward": ward, "district": district,
+        "street": geo.get("street"), "street_number": geo.get("street_number"),
+        "neighborhood": geo.get("neighborhood"), "city": geo.get("city"),
+        "county": geo.get("county"), "region": geo.get("region"),
+        "country": geo.get("country"),
+        "formatted_address": geo.get("formatted_address"),
         "fast_chargers": fast, "rapid_chargers": rapid, "ultra_chargers": ultra,
         "required_kva": kva,
         "traffic_speed": traffic["speed"], "traffic_freeflow": traffic["freeFlow"], "traffic_congestion": traffic["congestion"],
-        "road_width": road_width, "amenities": amenities
+        "amenities": amenities
     }
 
 # ==============================
@@ -172,10 +144,9 @@ def create_single_map(site, show_traffic=False):
     m = folium.Map(location=[site["latitude"], site["longitude"]], zoom_start=15,
                    tiles=f"https://mt1.google.com/vt/lyrs=m&x={{x}}&y={{y}}&z={{z}}&key={GOOGLE_API_KEY}", attr="Google Maps")
     popup = f"""
-    {site['street']}<br>{site['postcode']}<br>
+    {site['formatted_address']}<br>
     Power: {site['required_kva']} kVA<br>
     Traffic: {site['traffic_congestion']} ({site['traffic_speed']}/{site['traffic_freeflow']} mph)<br>
-    Road Width: {site['road_width']}<br>
     Amenities: {site['amenities']}
     """
     
@@ -183,7 +154,7 @@ def create_single_map(site, show_traffic=False):
         [site["latitude"], site["longitude"]],
         popup=popup,
         tooltip="EV Site",
-        icon=folium.Icon(color="pink")  # <-- pink marker
+        icon=folium.Icon(color="pink")
     ).add_to(m)
     if show_traffic: add_google_traffic_layer(m)
     folium.LayerControl().add_to(m)
@@ -197,10 +168,9 @@ def create_batch_map(sites, show_traffic=False):
                    tiles=f"https://mt1.google.com/vt/lyrs=m&x={{x}}&y={{y}}&z={{z}}&key={GOOGLE_API_KEY}", attr="Google Maps")
     for i, site in enumerate(sites):
         popup = f"""
-        Site {i+1}: {site['street']}<br>
+        Site {i+1}: {site['formatted_address']}<br>
         Power: {site['required_kva']} kVA<br>
         Traffic: {site['traffic_congestion']}<br>
-        Road Width: {site['road_width']}<br>
         Amenities: {site['amenities']}
         """
         
@@ -208,7 +178,7 @@ def create_batch_map(sites, show_traffic=False):
         [site["latitude"], site["longitude"]],
         popup=popup,
         tooltip="EV Site",
-        icon=folium.Icon(color="pink")  # <-- pink marker
+        icon=folium.Icon(color="pink")
     ).add_to(m)
     if show_traffic: add_google_traffic_layer(m)
     folium.LayerControl().add_to(m)
@@ -251,7 +221,6 @@ with tab1:
         site = st.session_state["single_site"]
         st.metric("Required kVA", site["required_kva"])
         st.metric("Traffic Congestion", site["traffic_congestion"])
-        st.metric("Road Width", site["road_width"])
         st.write(site)
         st.subheader("🗺️ Map")
         st_folium(create_single_map(site, show_traffic), width=700, height=500)
@@ -292,15 +261,10 @@ with tab2:
                             "ultra_chargers": row.get("ultra", 0),
                             "required_kva": 0,
                             "traffic_speed": None, "traffic_freeflow": None, "traffic_congestion": "Error",
-                            "road_width": None, "amenities": None
+                            "amenities": None
                         })
                     
-                    # Adaptive sleep
-                    if site.get("street") in ["Quota exceeded", "API denied"]:
-                        time.sleep(1.0)
-                    else:
-                        time.sleep(0.1)
-                    
+                    time.sleep(0.1)
                     progress.progress((i+1)/len(df))
                 
                 st.session_state["batch_results"] = results
