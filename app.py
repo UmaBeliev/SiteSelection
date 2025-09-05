@@ -1379,7 +1379,6 @@ with tab2:
                     })
                 except Exception as e:
                     st.warning(f"Error preparing site {i+1} for download: {e}")
-                    # Add basic data even if some fields fail
                     download_data.append({
                         'Site_Number': i + 1,
                         'Latitude': site.get('latitude', ''),
@@ -1392,7 +1391,6 @@ with tab2:
                 df_download = pd.DataFrame(download_data)
                 csv_data = df_download.to_csv(index=False)
                 
-                # Show download info
                 st.write(f"**Download includes {len(download_data)} sites with {len(df_download.columns)} data columns**")
                 
                 st.download_button(
@@ -1403,14 +1401,13 @@ with tab2:
                     key="download_csv_batch"
                 )
                 
-                # Also offer a simplified version
                 simplified_data = []
                 for i, site in enumerate(successful_results):
                     simplified_data.append({
                         'Site': i + 1,
                         'Lat': site.get('latitude', ''),
                         'Lon': site.get('longitude', ''),
-                        'Address': str(site.get('formatted_address', ''))[:100],  # Truncate long addresses
+                        'Address': str(site.get('formatted_address', ''))[:100],
                         'kVA': site.get('required_kva', 0),
                         'Road_Type': str(site.get('snapped_road_type', '')),
                         'Traffic': str(site.get('traffic_congestion', '')),
