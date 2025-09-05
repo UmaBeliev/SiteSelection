@@ -13,7 +13,7 @@ GOOGLE_API_KEY = st.secrets["google_api_key"]
 TOMTOM_API_KEY = st.secrets.get("tomtom_api_key", "")
 
 # ==============================
-# UTILITIES
+# UTILITY FUNCTIONS
 # ==============================
 
 @st.cache_data
@@ -30,7 +30,6 @@ def get_postcode_info(lat, lon):
 
 @st.cache_data
 def get_geocode_details(lat, lon):
-    """Rich Google Geocoding"""
     try:
         r = requests.get("https://maps.googleapis.com/maps/api/geocode/json", 
                          params={"latlng": f"{lat},{lon}", "key": GOOGLE_API_KEY}, timeout=10)
@@ -56,7 +55,6 @@ def get_geocode_details(lat, lon):
 
 @st.cache_data
 def get_nearby_amenities(lat, lon, radius=300, types=None):
-    """Places API: nearby POIs"""
     if types is None:
         types = ["charging_station","restaurant","cafe","supermarket","parking","gas_station"]
     amenities=[]
@@ -75,7 +73,6 @@ def get_nearby_amenities(lat, lon, radius=300, types=None):
 
 @st.cache_data
 def get_road_info(lat, lon):
-    """Roads API: snap to road & speed limit"""
     try:
         r = requests.get("https://roads.googleapis.com/v1/snapToRoads",
                          params={"path":f"{lat},{lon}","interpolate":"false","key":GOOGLE_API_KEY}, timeout=10)
@@ -94,7 +91,6 @@ def get_road_info(lat, lon):
 
 @st.cache_data
 def get_distance_matrix(orig_lat, orig_lon, dest_lat, dest_lon):
-    """Distance Matrix API for travel time in minutes"""
     try:
         r = requests.get("https://maps.googleapis.com/maps/api/distancematrix/json",
                          params={"origins":f"{orig_lat},{orig_lon}",
@@ -104,7 +100,7 @@ def get_distance_matrix(orig_lat, orig_lon, dest_lat, dest_lon):
         data = r.json()
         if data.get("rows"):
             dur = data["rows"][0]["elements"][0].get("duration_in_traffic")
-            if dur: return dur.get("value")/60  # minutes
+            if dur: return dur.get("value")/60
     except:
         pass
     return None
@@ -149,8 +145,7 @@ def process_site(lat, lon, fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw):
     traffic = get_tomtom_traffic(lat, lon) if TOMTOM_API_KEY else {"speed":None,"freeFlow":None,"congestion":"N/A"}
     amenities = get_nearby_amenities(lat, lon)
     road_info = get_road_info(lat, lon)
-    # Example: travel time to London city center
-    travel_time_to_center = get_distance_matrix(lat, lon, 51.5074, -0.1278)
+    travel_time_to_center = get_distance_matrix(lat, lon, 51.5074, -0.1278)  # London center
     return {
         "latitude": lat, "longitude": lon, "easting": easting, "northing": northing,
         "postcode": postcode, "ward": ward, "district": district,
@@ -166,3 +161,129 @@ def process_site(lat, lon, fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw):
         "speed_limit": road_info["speed_limit"],
         "travel_time_to_center_min": travel_time_to_center
     }
+
+# ==============================
+# MAP FUNCTIONS
+# ==============================
+
+def add_google_traffic_layer(m):
+    folium.TileLayer(
+        tiles=f"https://mt1.google.com/vt/lyrs=h,traffic&x={{x}}&y={{y}}&z={{z}}&key={GOOGLE_API_KEY}",
+        attr="Google Traffic", name="Traffic"
+    ).add_to(m)
+
+def create_single_map(site, show_traffic=False):
+    m = folium.Map(location=[site["latitude"], site["longitude"]], zoom_start=15,
+                   tiles=f"https://mt1.google.com/vt/lyrs=m&x={{x}}&y={{y}}&z={{z}}&key={GOOGLE_API_KEY}", attr="Google Maps")
+    popup = f"""
+    {site.get('formatted_address', 'Unknown Address')}<br>
+    Power: {site.get('required_kva','N/A')} kVA<br>
+    Traffic: {site.get('traffic_congestion','N/A')} ({site.get('traffic_speed','N/A')}/{site.get('traffic_freeflow','N/A')} mph)<br>
+    Road Type: {site.get('road_type','N/A')}<br>
+    Speed Limit: {site.get('speed_limit','N/A')}<br>
+    Travel time to London center: {site.get('travel_time_to_center_min','N/A')} min<br>
+    Nearby Amenities: {site.get('amenities','N/A')}
+    """
+    folium.Marker([site["latitude"], site["longitude"]], popup=popup, tooltip="EV Site", icon=folium.Icon(color="pink")).add_to(m)
+    if show_traffic: add_google_traffic_layer(m)
+    folium.LayerControl().add_to(m)
+    return m
+
+def create_batch_map(sites, show_traffic=False):
+    if not sites: return None
+    center_lat = sum(s["latitude"] for s in sites)/len(sites)
+    center_lon = sum(s["longitude"] for s in sites)/len(sites)
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=6,
+                   tiles=f"https://mt1.google.com/vt/lyrs=m&x={{x}}&y={{y}}&z={{z}}&key={GOOGLE_API_KEY}", attr="Google Maps")
+    for i, site in enumerate(sites):
+        popup = f"""
+        Site {i+1}: {site.get('formatted_address','Unknown Address')}<br>
+        Power: {site.get('required_kva','N/A')} kVA<br>
+        Traffic: {site.get('traffic_congestion','N/A')}<br>
+        Road Type: {site.get('road_type','N/A')}<br>
+        Speed Limit: {site.get('speed_limit','N/A')}<br>
+        Travel time to London center: {site.get('travel_time_to_center_min','N/A')} min<br>
+        Nearby Amenities: {site.get('amenities','N/A')}
+        """
+        folium.Marker([site["latitude"], site["longitude"]], popup=popup, tooltip="EV Site", icon=folium.Icon(color="pink")).add_to(m)
+    if show_traffic: add_google_traffic_layer(m)
+    folium.LayerControl().add_to(m)
+    return m
+
+# ==============================
+# STREAMLIT APP
+# ==============================
+
+st.set_page_config(page_title="EV Charger Site Generator", page_icon="🔋", layout="wide")
+st.title("🔋 EV Charger Site Generator (CPO Edition)")
+
+# Sidebar
+with st.sidebar:
+    st.header("⚙️ Settings")
+    fast_kw = st.number_input("Fast Charger Power (kW)", value=22)
+    rapid_kw = st.number_input("Rapid Charger Power (kW)", value=60)
+    ultra_kw = st.number_input("Ultra Charger Power (kW)", value=150)
+    show_traffic = st.checkbox("Show Google Traffic Layer", value=False)
+
+# Tabs
+tab1, tab2 = st.tabs(["📍 Single Site", "📁 Batch Processing"])
+
+# --- SINGLE SITE ---
+with tab1:
+    st.subheader("Analyze Single Site")
+    lat = st.text_input("Latitude", "51.5074")
+    lon = st.text_input("Longitude", "-0.1278")
+    fast = st.number_input("Fast Chargers", min_value=0, value=0)
+    rapid = st.number_input("Rapid Chargers", min_value=0, value=0)
+    ultra = st.number_input("Ultra Chargers", min_value=0, value=0)
+
+    if st.button("🔍 Analyze Site"):
+        try:
+            site = process_site(float(lat), float(lon), fast, rapid, ultra, fast_kw, rapid_kw, ultra_kw)
+            st.session_state["single_site"] = site
+        except Exception as e:
+            st.error(f"Error: {e}")
+
+    if "single_site" in st.session_state:
+        site = st.session_state["single_site"]
+        st.metric("Required kVA", site["required_kva"])
+        st.metric("Traffic Congestion", site["traffic_congestion"])
+        st.metric("Road Type", site["road_type"])
+        st.metric("Travel time to London center (min)", site["travel_time_to_center_min"])
+        st.subheader("📋 Details")
+        st.write(site)
+        st.subheader("🗺️ Map")
+        st_folium(create_single_map(site, show_traffic), width=700, height=500)
+
+# --- BATCH PROCESSING ---
+with tab2:
+    st.subheader("Batch Processing")
+    uploaded = st.file_uploader("Upload CSV with columns: latitude, longitude, fast, rapid, ultra", type="csv")
+    if uploaded:
+        df = pd.read_csv(uploaded)
+        required_cols = {"latitude", "longitude", "fast", "rapid", "ultra"}
+        if not required_cols.issubset(df.columns):
+            st.error(f"Missing columns: {', '.join(required_cols - set(df.columns))}")
+        else:
+            if st.button("🚀 Process All Sites"):
+                progress = st.progress(0)
+                results=[]
+                for i,row in df.iterrows():
+                    try:
+                        site = process_site(float(row["latitude"]), float(row["longitude"]),
+                                            int(row.get("fast",0)), int(row.get("rapid",0)), int(row.get("ultra",0)),
+                                            fast_kw, rapid_kw, ultra_kw)
+                        results.append(site)
+                    except:
+                        results.append({})
+                    progress.progress((i+1)/len(df))
+                st.session_state["batch_results"] = results
+
+    if "batch_results" in st.session_state:
+        results = st.session_state["batch_results"]
+        df_out = pd.DataFrame(results)
+        st.subheader("📋 Batch Results")
+        st.dataframe(df_out)
+        st.subheader("🗺️ Map")
+        st_folium(create_batch_map(results, show_traffic=show_traffic), width=700, height=500)
+        st.download_button("📥 Download CSV", df_out.to_csv(index=False), "batch_results.csv", "text/csv")
